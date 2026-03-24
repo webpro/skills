@@ -36,7 +36,7 @@ Keep V8 on the fast path:
 
 ## Collections
 
-- Prefer `Map` over plain objects for dynamic key-value collections — Map is \~5x faster for insertion, \~3x for key lookup, \~13x for iteration; use objects only for static/known-shape data
+- Prefer `Map` over plain objects for dynamic key-value collections — large Maps are faster for insertion, key lookup and iteration; use objects only for static/known-shape data
 - Keep arrays homogeneous — all integers = `PACKED_SMI` (fastest), adding a float transitions to `PACKED_DOUBLE`, adding a string transitions to `PACKED_ELEMENTS` (slowest); transitions are one-way
 - Prefer array literals over `new Array(n)` — `new Array(n)` creates permanently "holey" arrays requiring prototype chain lookups; when you need a pre-sized array, use `new Array(n).fill(0)` to avoid holes
 - Don't read out-of-bounds — forces V8 prototype chain walk
@@ -61,7 +61,7 @@ Keep V8 on the fast path:
 ## Allocation & GC pressure
 
 - Minimize object allocations in hot paths — every `{}`, `[]`, `new` is GC work
-- Avoid `{...spread}` for copying objects in hot paths — allocates + copies all properties; mutate or use a dedicated clone function; `structuredClone` is even worse (\~2ms for moderate objects) — for shallow copies, `Object.assign`/spread is dramatically faster than `structuredClone`
+- Avoid `{...spread}` for copying objects in hot paths — allocates + copies all properties; mutate or use a dedicated clone function; `structuredClone` is even worse — for shallow copies, `Object.assign`/spread is dramatically faster than `structuredClone`
 - Cache deep property chains in local vars — `const x = obj.a.b.c` avoids repeated pointer dereferences
 - Short-circuit common cases to avoid allocations — e.g. return single element directly instead of `.join()` on a one-element array
 - Reuse objects with `reset()`/`copyFrom()` instead of allocating new ones — swap references instead of creating
