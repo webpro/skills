@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Install and manage skills in repo (flat list!)
+#
+# Usage:
+#   skills install <git-url-or-local-path>
+#   skills update [name]
+#   skills remove <name>
+#   skills list
+#
+# Examples:
+#   skills install <owner/repo>
+#   skills install https://github.com/user/repo
+#   skills install ~/p/skills
+#   skills install <owner/repo>#branch
+#   skills update                     # update all
+#   skills update <owner/repo>        # update one
+#   skills remove <owner/repo>
+#   skills list
+#
+# Skills: directories with SKILL.md → symlinked to .agents/skills/
+# Symlink .claude/skills → .agents/skills for Claude Code compatibility.
+
+REPOS_DIR=".agents/skills-repos"
+SKILLS_DIR=".agents/skills"
+
+expand_src() {
+  local src="$1"
+  local bare="${src%%#*}"
+  if [[ "$bare" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
+    echo "https://github.com/$bare${src#"$bare"}"
+  elif [ -d "$bare" ]; then
+    echo "file://$(cd "$bare" && pwd)${src#"$bare"}"
+  else
+    echo "$src"
+  fi
+}
+
+resolve_name() {
+  local input="${1%%#*}"
+  input="${input%.git}"
+  input="${input%/}"
+  if [[ "$input" =~ ^([a-zA-Z0-9_.-]+)/([a-zA-Z0-9_.-]+)$ ]]; then
+    echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+    return
+  fi
+  if [ -d "$REPOS_DIR/$input" ]; then
+    echo "$input"
+    return
+  fi
+  parse_name "$input"
+}
+
+parse_name() {
+  local src="${1%%#*}"
+  src="${src%.git}"
+  src="${src%/}"
+  src="${src#file://}"
+  if [[ "$src" =~ github\.com[/:]([^/]+)/([^/]+)$ ]]; then
+    echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+    return
+  fi
+  if [ -d "$src/.git" ]; then
+    local remote
+    remote=$(git -C "$src" remote get-url origin 2>/dev/null || true)
+    remote="${remote%.git}"
+    if [[ "$remote" =~ github\.com[/:]([^/]+)/([^/]+)$ ]]; then
+      echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+      return
+    fi
+  fi
+  basename "$src"
+}
+
+find_skills_src() {
+  local repo="$1"
+  if [ -d "$repo/skills" ]; then
+    echo "$repo/skills"
+  elif [ -d "$repo/.agents/skills" ]; then
+    echo "$repo/.agents/skills"
+  elif [ -d "$repo/.claude/skills" ]; then
+    echo "$repo/.claude/skills"
+  else
+    for d in "$repo"/*/; do
+      if [ -f "$d/SKILL.md" ]; then
+        echo "$repo"
+        return
+      fi
+    done
+  fi
+}
+
+link_skills() {
+  local name="$1" repo="$2"
+  local skills_src
+  skills_src=$(find_skills_src "$repo")
+  [ -z "$skills_src" ] && return 0
+  local count=0
+  for skill_dir in "$skills_src"/*/; do
+    [ -f "$skill_dir/SKILL.md" ] || continue
+    ln -sfn "$(cd "$skill_dir" && pwd)" "$SKILLS_DIR/${name}-$(basename "$skill_dir")"
+    count=$((count + 1))
+  done
+  echo "$count"
+}
+
+cmd_install() {
+  local src
+  src=$(expand_src "${1:?Usage: skills install <owner/repo|url|path>}")
+
+  local name branch=""
+  name=$(parse_name "$src")
+  if [[ "$src" == *"#"* ]]; then
+    branch="${src##*#}"
+    src="${src%%#*}"
+  fi
+
+  mkdir -p "$REPOS_DIR" "$SKILLS_DIR"
+
+  if [ -d "$REPOS_DIR/$name" ]; then
+    echo "Already installed: $name (use 'skills update' to refresh)"
+    return
+  fi
+
+  local clone_args=(--depth 1)
+  [ -n "$branch" ] && clone_args+=(--branch "$branch")
+  git clone "${clone_args[@]}" "$src" "$REPOS_DIR/$name" 2>&1
+
+  local skill_count
+  skill_count=$(link_skills "$name" "$REPOS_DIR/$name")
+
+  if [ "${skill_count:-0}" -gt 0 ]; then
+    echo "Installed ${skill_count} skills from $name"
+  else
+    echo "No skills found in $name"
+    rm -rf "$REPOS_DIR/$name"
+    return 1
+  fi
+}
+
+cmd_update() {
+  local filter=""
+  [ -n "${1:-}" ] && filter=$(resolve_name "$1")
+  [ -d "$REPOS_DIR" ] || { echo "No skills installed"; return 1; }
+
+  for repo in "$REPOS_DIR"/*/; do
+    local name
+    name=$(basename "$repo")
+    [ -n "$filter" ] && [ "$name" != "$filter" ] && continue
+
+    echo "Updating $name..."
+    git -C "$repo" pull 2>&1 || { echo "Failed to update $name"; continue; }
+
+    for link in "$SKILLS_DIR/${name}-"*; do
+      [ -L "$link" ] && rm "$link"
+    done
+
+    local skill_count
+    skill_count=$(link_skills "$name" "$repo")
+    echo "Updated $name (${skill_count:-0} skills)"
+  done
+}
+
+cmd_remove() {
+  local name
+  name=$(resolve_name "${1:?Usage: skills remove <owner/repo|name>}")
+
+  if [ ! -d "$REPOS_DIR/$name" ]; then
+    echo "Not found: $name"
+    return 1
+  fi
+
+  for link in "$SKILLS_DIR/${name}-"*; do
+    [ -L "$link" ] && rm "$link"
+  done
+
+  rm -rf "$REPOS_DIR/$name"
+  echo "Removed $name"
+}
+
+cmd_list() {
+  [ -d "$REPOS_DIR" ] || { echo "No skills installed"; return 0; }
+
+  for repo in "$REPOS_DIR"/*/; do
+    local name
+    name=$(basename "$repo")
+    local remote
+    remote=$(git -C "$repo" remote get-url origin 2>/dev/null || echo "local")
+    echo "$name ($remote)"
+    for link in "$SKILLS_DIR/${name}-"*; do
+      [ -L "$link" ] && echo "  $(basename "$link")"
+    done
+  done
+}
+
+case "${1:-}" in
+  install) shift; cmd_install "$@" ;;
+  update)  shift; cmd_update "$@" ;;
+  remove)  shift; cmd_remove "$@" ;;
+  list)    shift; cmd_list "$@" ;;
+  *)       echo "Usage: skills <install|update|remove|list> [args]"; exit 1 ;;
+esac

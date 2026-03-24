@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Import skills from external repos
+#
+# Usage:
+#   import <owner/repo>          # import all skills
+#   import <owner/repo> <skill>  # import one skill
+#
+# Adds source URL to SKILL.md frontmatter.
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SKILLS_DIR="$ROOT/skills"
+
+src="${1:?Usage: import <owner/repo> [skill-name]}"
+filter="${2:-}"
+
+url="${src%%#*}"
+branch=""
+[[ "$src" == *"#"* ]] && branch="${src##*#}"
+[[ "$url" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]] && url="https://github.com/$url"
+
+tmp=$(mktemp -d)
+trap "rm -rf '$tmp'" EXIT
+
+clone_args=(--depth 1 -q)
+[ -n "$branch" ] && clone_args+=(--branch "$branch")
+git clone "${clone_args[@]}" "$url" "$tmp" 2>&1
+
+skills_src="$tmp"
+[ -d "$tmp/skills" ] && skills_src="$tmp/skills"
+[ -d "$tmp/.claude/skills" ] && skills_src="$tmp/.claude/skills"
+
+count=0
+for skill_dir in "$skills_src"/*/; do
+  [ -f "$skill_dir/SKILL.md" ] || continue
+  name=$(basename "$skill_dir")
+  [ -n "$filter" ] && [ "$name" != "$filter" ] && continue
+
+  dest="_$name"
+  rm -rf "$SKILLS_DIR/$dest"
+  cp -r "$skill_dir" "$SKILLS_DIR/$dest"
+
+  awk -v src="$url" '
+    /^---$/ { n++; if (n==2) print "source: " src }
+    { print }
+  ' "$SKILLS_DIR/$dest/SKILL.md" > "$SKILLS_DIR/$dest/SKILL.md.tmp" \
+    && mv "$SKILLS_DIR/$dest/SKILL.md.tmp" "$SKILLS_DIR/$dest/SKILL.md"
+
+  count=$((count + 1))
+  echo "imported: _$name"
+done
+
+[ -n "$filter" ] && [ "$count" -eq 0 ] && echo "not found: $filter"
+[ "$count" -gt 0 ] && echo "$count skill(s) from $url"

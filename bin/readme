@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="webpro/skills"
+
+cat <<'EOF'
+# Skills
+
+Everything is skill issues.
+EOF
+
+for skill in "$ROOT"/skills/*/SKILL.md; do
+  [[ "$skill" == */skills/_* ]] && continue
+  name=$(awk -F': ' '/^name:/{print $2; exit}' "$skill")
+  desc=$(awk -F': ' '/^description:/{print $2; exit}' "$skill")
+  dir=$(basename "$(dirname "$skill")")
+  cat <<SKILL
+
+## $name
+
+$desc
+
+\`\`\`sh
+npx skills add $REPO@$dir
+\`\`\`
+SKILL
+done
