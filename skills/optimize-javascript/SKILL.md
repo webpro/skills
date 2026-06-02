@@ -24,12 +24,14 @@ Keep V8 on the fast path:
 ## Strings & regex
 
 - Avoid `.split()` for simple parsing — scan with `indexOf`/`slice` instead (one pass, no intermediate array allocation)
+- Don't hand-roll char-by-char splitting to avoid `.split()` — native `.split()` is a C++ builtin and beats a JS accumulation loop (`cur += s[i]`); even an `indexOf`/`slice` loop that still builds the array loses to it. Only skip `.split()` when you can extract what you need in a single `indexOf`/`slice` pass with no array materialization (`"".split(sep)` returns `[""]` not `[]`, so guard if you need `[]`)
 - Use `.includes()` or `.startsWith()` before regex — avoids regex engine for the common non-matching case
 - Avoid unnecessary `.trim()`, `.replace()` — forces V8 to materialize internal rope/cons-string representations
 - Prefer `String.fromCharCode()` over `String.fromCodePoint()` for BMP characters (< 0x10000) — faster path, and characters outside BMP are rare
 - Use `charCodeAt()` for character classification in hot loops — numeric comparison is faster than string operations
 - Accumulate ranges, then `.substring()` once — avoid character-by-character string concatenation
 - Pre-compute character code constants — avoid runtime `charCodeAt()` on string literals in hot paths
+- Hoist invariant string building out of hot-loop comparisons — `arr.find(d => path.startsWith(`${d}/`))` rebuilds `${d}/`every iteration; precompute the concatenated forms once and compare against the pre-built strings (applies to any`+`/template in a loop that doesn't vary with the iteration)
 - Prefer manual character scanning (`indexOf`, `charCodeAt`, loops) over regex for simple patterns — regex has engine overhead (backtracking, state machines) that manual parsing avoids
 - Cache compiled regexes outside loops — dynamic `new RegExp()` in a loop recompiles every iteration
 - Reuse a single `Intl.Collator` instance over repeated `localeCompare()` calls
@@ -41,19 +43,22 @@ Keep V8 on the fast path:
 - Prefer array literals over `new Array(n)` — `new Array(n)` creates permanently "holey" arrays requiring prototype chain lookups; when you need a pre-sized array, use `new Array(n).fill(0)` to avoid holes
 - Don't read out-of-bounds — forces V8 prototype chain walk
 - Use `Set.has()` over `Array.includes()` for repeated lookups — O(1) vs O(n)
+- Don't double-look up a Map — `if (map.has(k)) map.get(k).add(v)` hashes the key twice (`has` and `get` each run the lookup); take the value once with `const inner = map.get(k); if (inner) inner.add(v)` (or `map.get(k)?.add(v)`). Caveat: the single-lookup form treats a missing key as falsy, so only use it when `undefined`/falsy isn't a valid stored value
 - Cache repeated lookups over static data — a linear scan (`.find()`, `.filter()`) called per item in an outer loop becomes O(n × m); memoize when the underlying data doesn't change between calls
 - Use binary search on sorted arrays instead of `.findIndex()` — O(log n) vs O(n)
 - Prefer TypedArrays for large numeric data — contiguous memory enables CPU prefetching
 
 ## Functions & control flow
 
-- Don't create functions inside hot loops — closure allocation + prevents V8 inlining; also watch for closure nesting in merge/compose patterns where `merged = (x) => { prev(x); next(x) }` applied N times creates N-deep call chains — flatten into an array and iterate instead
+- Don't create functions inside hot loops — closure allocation + prevents V8 inlining. For merge/compose fan-out, prefer an array of handlers + a plain iteration loop over nested `merged = (x) => { prev(x); next(x) }` wrappers applied N times: the nested chain gets progressively slower as it deepens, while the array loop stays flat. A one-off 2-way compose is fine (it inlines to two direct calls); don't build deeper wrapper chains expecting a speedup
+- Push, don't poll, on growing shared collections — when a producer mutates a Set/Array the consumer needs to react to, fire a callback on each add; polling "did the size grow? then re-iterate" is O(N×M) because each consumer pass re-walks the full collection from the start
 - Deduplicate repeated registrations in multi-tenant loops — when the same handler/callback is registered once per iteration (e.g. per workspace, per route, per config entry), identical work multiplies; track what's already registered and skip duplicates
 - Keep hot functions small — TurboFan won't inline functions above \~600 AST nodes; extract cold/error paths into separate functions to keep the hot function inlineable
 - Prefer `for`/`while` over `.forEach()` in hot paths — the callback creates per-iteration scope frames that prevent TurboFan from inlining
 - Avoid the `arguments` object — use rest params (`...args`); even referencing `arguments` inhibits optimization
 - Match function arity at call sites — mismatched arity creates arguments adaptor frames
 - Generators have inherent overhead — provide array-returning alternative for callers that need all results; use generators only when lazy evaluation is needed
+- A generator's cost is the per-element `yield` suspend/resume itself — V8 inlines surrounding identity wrappers, nested closures, and dead constant-guarded branches (`if (DEBUG) …`) to \~0, so stripping that wrapping for speed does nothing. To remove the cost, return an array instead of yielding (trades a one-time allocation for no per-element suspension). Eliminate the generator, not the wrapping
 - Don't use try/catch for expected control flow — use APIs that return null/undefined (e.g. `fs.statSync(file, { throwIfNoEntry: false })`) because Error objects capture stack traces, which is expensive
 - Keep try blocks small — V8 optimizes code outside try blocks more aggressively
 - Avoid `Proxy` in hot paths — V8 falls back from JIT to interpreter
@@ -66,6 +71,7 @@ Keep V8 on the fast path:
 - Short-circuit common cases to avoid allocations — e.g. return single element directly instead of `.join()` on a one-element array
 - Reuse objects with `reset()`/`copyFrom()` instead of allocating new ones — swap references instead of creating
 - Measure before reusing allocations — object pooling/reuse adds complexity; V8 handles short-lived same-shape objects efficiently via young-generation GC, so per-call `new Set()` may be cheaper than maintaining reusable state
+- Memoize allocators whose output is deterministic from their input — a function returning a fresh `Set`/array/object built from its args (e.g. `getDependencies(name) { return new Set([...a, ...b]) }`) reallocates an identical result on every call; cache by input when the same inputs recur. Caveats: the cached value is now shared, so callers must treat it as immutable, and it only pays off when inputs actually repeat
 - Defer expensive work with lazy getters — use `null` sentinel to distinguish "not computed" from "no value", parse on first access only
 - Never use an unbounded `Map`/object as a cache — it's a memory leak; use `lru-cache` with `max` + `ttl` to bound growth, or `WeakMap` when keys are objects with independent lifetimes
 
