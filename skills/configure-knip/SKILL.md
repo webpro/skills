@@ -38,13 +38,13 @@ This provides three MCP capabilities:
 
 ## Configuration Review Hints
 
-- Never use "ignore" patterns (hides real issues!), always prefer specific solutions; other `ignore*` options are allowed
-- Many unused exported types → try `ignoreExportsUsedInFile: { interface: true, type: true }`
+- Never use "ignore" patterns (hides real issues!), always prefer specific solutions; other ignore\* options are allowed
 - Remove ignore patterns that don't match any files
 - Remove redundant ignore patterns — Knip respects .gitignore (node_modules, dist, build, .git)
 - Remove entry patterns covered by config defaults and auto-detected plugins
-- Config files (e.g. vite.config.ts) showing as unused → try enable or disable the plugin explicitly (`vite: true`)
-- Dependencies matching Node.js builtins: add to ignoreDependencies (e.g. buffer, process)
+- Config files (e.g. vite.config.ts) showing as unused → try enable or disable the plugin explicitly ({ vite: true })
 - Unresolved imports from path aliases: add paths to Knip config (tsconfig.json semantics)
+- Dependencies matching Node.js builtins: add to ignoreDependencies (e.g. buffer, process)
+- Many unused exported types → consider ignoreExportsUsedInFile: { interface: true, type: true }
 
 [1]: https://knip.dev
