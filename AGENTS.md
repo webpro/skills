@@ -19,7 +19,8 @@
 5. Document results: add review section to `.agents/tasks/todo-(name).md`
 6. Capture lessons: update `.agents/lessons.md` after corrections
 
-- Use subagents liberally to keep main context window clean
+- Skip planning for quick and trivial tasks
+- Authorized to use subagents liberally and keep main context window clean
 - Offload research, exploration, and parallel analysis to subagents
 
 ## Implementation
@@ -50,10 +51,10 @@
 
 ## Communication
 
-- Don't add comments to code, unless explicitly asked for.
+- Don't add comments to code, unless explicitly asked for
 - Zero context switching required from the user — provide all needed context inline
 - When reporting information to the user, be extremely concise and sacrifice grammar for the sake of concision
-- In code, comments, PRs and commits: talk product, not process — skip internal reasoning and information outdated after the fact
+- Talk product, not process in e.g. comments and PR descriptions: optimize for the reviewer and future reference — cut scope disclaimers, follow-up claims and verbose process notes
 
 ## Tools & environment
 
@@ -63,18 +64,25 @@
 - Try `NO_COLOR=1` before manually stripping ANSI codes (sometimes `FORCE_COLOR=0`)
 - Prefer dedicated Read/Grep/Glob tools over shell for inspection, failed command is a bug to diagnose
 - Default tool/shell versions may lag — macOS `/bin/bash` is still 3.2.57 (no `mapfile`, no associative arrays, no `[[ -v ]]`, no `globstar`)
-- BSD `sed`/`awk`/`grep`/`date`/coreutils on macOS ≠ GNU. Probe with `--version` / `command -v` when flags or output look wrong; resolve a modern one on PATH (homebrew gnubin, package manager install path) and invoke it directly.
+- Expect GNU sed/awk/grep/date/diff/find/tar/make/coreutils on PATH (Homebrew gnubin); non-login shells (cron/CI) may fall back to BSD `/usr/bin` → confirm with `command -v` → use g-prefix (`gsed`, `gawk`…)
 - A missing-feature error is a switch-tool signal — don't work around in another language
 - For Claude Code's Bash tool (which hardcodes `/bin/bash`), a one-time install fixes it machine-wide: see [claude-hooks/use-modern-bash/][1]
 
 ### Git
 
-- Don't blindly assume `gh` is the tool you need, check remote and applicable tools first.
+- Commit work in logical chunks — rule of thumb: stay on main in solo projects, otherwise branch out and prepare for PR
+- Use worktrees to optimize parallel work, e.g. for multiple PRs at once (one agent per worktree); overkill for sequential work
+- When asked to create or update a PR, always branch from or rebase on top of latest main
+- Match the maintainer's existing commit message style — ignore merge commits and squash-merged PR titles
+- Don't blindly assume `gh` is the tool you need, check remote and applicable tools first
 - Multi-line commit messages: write to temp file, `git commit -F <file>` — not the heredoc-in-`$()` pattern as escaping breaks
+- If you hit ssh-key commit signing: use --no-gpg-sign — keep going and allow user to rebase and sign afterwards (i.e. don't push)
+- Run the same class of checks CI will run before pushing
+- Review public copy separately: must not include local workflow artifacts
 
 ### Node.js
 
-- Look at project's root lockfile and package.json to select package manager (npm/npx, pnpm/pnpx, etc.)
+- Look at project's root lockfile and package.json to select package manager (npm/npx, pnpm/pnpx, etc.) — prefer pnpm if unknown or new
 - Node.js LTS (24) is the default; use `node` directly (skip `tsx` and `--experimental-strip-types`)
 - Use `n` to install specific Node.js version
 
