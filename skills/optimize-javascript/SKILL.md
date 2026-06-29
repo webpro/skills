@@ -12,6 +12,13 @@ Keep V8 on the fast path:
 3. Minimize allocations — every `{}`, `[]`, spread is GC work
 4. Simple operations first — manual scanning over regex, `for` over iterators
 
+## Optimization workflow
+
+- Profile before changing code — identify whether the bottleneck is CPU, I/O, allocation/GC, startup/module graph, or algorithmic complexity
+- Benchmark the smallest representative workload — warm up, consume results so dead-code elimination cannot remove the work, and compare baseline/change in the same run to avoid drift
+- Use the right Node/V8 diagnostic for the question — `node --prof`/`--prof-process` for CPU, `--trace-deopt` for deoptimizations, `--trace-turbo-inlining` for inlining, `--log-ic` for inline-cache state, heap snapshots or GC traces for memory
+- Treat every rule below as a hypothesis — keep the change only when profiler output, benchmark output, or simpler asymptotic behavior pays for the added complexity in the target workload
+
 ## Object shapes & inline caches
 
 - Initialize objects with the same properties in the same order — V8 assigns hidden classes (shapes); consistent shapes keep functions monomorphic (fastest), 5+ shapes = megamorphic (hash-table fallback)
@@ -40,7 +47,7 @@ Keep V8 on the fast path:
 
 - Prefer `Map` over plain objects for dynamic key-value collections — large Maps are faster for insertion, key lookup and iteration; use objects only for static/known-shape data
 - Keep arrays homogeneous — all integers = `PACKED_SMI` (fastest), adding a float transitions to `PACKED_DOUBLE`, adding a string transitions to `PACKED_ELEMENTS` (slowest); transitions are one-way
-- Prefer array literals over `new Array(n)` — `new Array(n)` creates permanently "holey" arrays requiring prototype chain lookups; when you need a pre-sized array, use `new Array(n).fill(0)` to avoid holes
+- Prefer array literals over `new Array(n)` — pre-sized arrays start holey and can stay on slower paths; when you need a pre-sized dense array, initialize it immediately with `.fill(value)`
 - Don't read out-of-bounds — forces V8 prototype chain walk
 - Use `Set.has()` over `Array.includes()` for repeated lookups — O(1) vs O(n)
 - Don't double-look up a Map — `if (map.has(k)) map.get(k).add(v)` hashes the key twice (`has` and `get` each run the lookup); take the value once with `const inner = map.get(k); if (inner) inner.add(v)` (or `map.get(k)?.add(v)`). Caveat: the single-lookup form treats a missing key as falsy, so only use it when `undefined`/falsy isn't a valid stored value
@@ -50,11 +57,11 @@ Keep V8 on the fast path:
 
 ## Functions & control flow
 
-- Don't create functions inside hot loops — closure allocation + prevents V8 inlining. For merge/compose fan-out, prefer an array of handlers + a plain iteration loop over nested `merged = (x) => { prev(x); next(x) }` wrappers applied N times: the nested chain gets progressively slower as it deepens, while the array loop stays flat. A one-off 2-way compose is fine (it inlines to two direct calls); don't build deeper wrapper chains expecting a speedup
+- A function created per hot-loop iteration only costs when it *escapes* — stored, registered, or passed where its identity is observed. V8 often inlines or elides the rest (immediately-invoked callbacks, args to builtins like `.map`/`.then`, object-property callbacks), so don't flag a non-escaping callback as a cost without evidence it's retained. For merge/compose fan-out, prefer an array of handlers + a plain iteration loop over nested `merged = (x) => { prev(x); next(x) }` wrappers applied N times: the nested chain gets progressively slower as it deepens, while the array loop stays flat. A one-off 2-way compose is fine (it inlines to two direct calls); don't build deeper wrapper chains expecting a speedup
 - Push, don't poll, on growing shared collections — when a producer mutates a Set/Array the consumer needs to react to, fire a callback on each add; polling "did the size grow? then re-iterate" is O(N×M) because each consumer pass re-walks the full collection from the start
 - Deduplicate repeated registrations in multi-tenant loops — when the same handler/callback is registered once per iteration (e.g. per workspace, per route, per config entry), identical work multiplies; track what's already registered and skip duplicates
-- Keep hot functions small — TurboFan won't inline functions above \~600 AST nodes; extract cold/error paths into separate functions to keep the hot function inlineable
-- Prefer `for`/`while` over `.forEach()` in hot paths — the callback creates per-iteration scope frames that prevent TurboFan from inlining
+- Keep hot functions small — V8's inlining budgets change by version and code shape; extract cold/error paths when it keeps the hot path simple enough to inline
+- Prefer `for`/`while` over `.forEach()` in measured tight loops — callback overhead and inlining limits can matter, but don't flag non-escaping callbacks without profiler or benchmark evidence
 - Avoid the `arguments` object — use rest params (`...args`); even referencing `arguments` inhibits optimization
 - Match function arity at call sites — mismatched arity creates arguments adaptor frames
 - Generators have inherent overhead — provide array-returning alternative for callers that need all results; use generators only when lazy evaluation is needed
@@ -87,7 +94,7 @@ Keep V8 on the fast path:
 
 ## Async
 
-- Avoid unnecessary `async`/`await` — each `await` internally creates 2 extra promises and needs 3 microtick round-trips; don't `await` non-promise values, don't wrap already-async functions in redundant `async` wrappers
+- Avoid unnecessary `async`/`await` — async boundaries are not free, especially in hot loops; don't `await` non-promise values, don't wrap already-async functions in redundant `async` wrappers, and measure before contorting readable code
 - Cap concurrency on `Promise.all` over dynamic-length arrays — unbounded parallel I/O exhausts memory, file descriptors, and connection pools; use `p-limit` or `p-map` with an explicit concurrency limit
 
 ## Modules
