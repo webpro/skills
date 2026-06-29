@@ -12,6 +12,14 @@ Everything is skill issues
 
 ## In This Repo
 
+### clean-git-repo
+
+Prune a git repository's merged, gone, and stale branches (squash-merges included), plus stale remote-tracking refs, worktrees, and local-only tags. Reports as a dry run first; never touches the current, default, protected, or worktree-checked-out branches.
+
+```sh
+npx skills add webpro/skills --skill clean-git-repo
+```
+
 ### configure-knip
 
 Set up and optimize Knip configuration to find unused files, dependencies, and exports. Use when configuring knip.json or cleaning up a JavaScript or TypeScript codebase.
