@@ -38,7 +38,7 @@ Keep V8 on the fast path:
 - Use `charCodeAt()` for character classification in hot loops — numeric comparison is faster than string operations
 - Accumulate ranges, then `.substring()` once — avoid character-by-character string concatenation
 - Pre-compute character code constants — avoid runtime `charCodeAt()` on string literals in hot paths
-- Hoist invariant string building out of hot-loop comparisons — `arr.find(d => path.startsWith(`${d}/`))` rebuilds `${d}/`every iteration; precompute the concatenated forms once and compare against the pre-built strings (applies to any`+`/template in a loop that doesn't vary with the iteration)
+- Hoist invariant string building out of hot-loop comparisons — `arr.find(d => path.startsWith(`${d}/`))` rebuilds `${d}/` every iteration; precompute the concatenated forms once and compare against the pre-built strings (applies to any `+`/template in a loop that doesn't vary with the iteration)
 - Prefer manual character scanning (`indexOf`, `charCodeAt`, loops) over regex for simple patterns — regex has engine overhead (backtracking, state machines) that manual parsing avoids
 - Cache compiled regexes outside loops — dynamic `new RegExp()` in a loop recompiles every iteration
 - Reuse a single `Intl.Collator` instance over repeated `localeCompare()` calls
@@ -101,3 +101,50 @@ Keep V8 on the fast path:
 
 - Lazy-load non-critical modules — dynamic `import()` or `require()` inside conditional blocks avoids loading unused code
 - Avoid barrel files (`index.ts` re-exporting everything) — each re-export adds to the module graph
+
+## Resources
+
+V8 internals — the "why" behind most of the rules above:
+
+- [Sparkplug][1] — baseline compiler: why simple code gets fast quickly before top-tier optimization
+- [Maglev][2] — mid-tier optimizer: how modern V8 reaches optimized code without going straight to TurboFan
+- [TurboFan][3] — optimizing compiler: function inlining, dead-code elimination, and version-dependent inlining budgets
+- [Fast properties in V8][4] — hidden classes (shapes); why consistent property order and avoiding `delete` keep objects monomorphic
+- [Elements kinds in V8][5] — packed vs holey arrays and the one-way SMI → double → elements transitions
+- [What's up with monomorphism?][6] — Vyacheslav Egorov on inline caches and mono/poly/megamorphic call and property sites
+- [Speculative optimization in V8][7] — Benedikt Meurer on feedback vectors driving the fast path
+- [Trash talk: the Orinoco garbage collector][8] — generational GC; why short-lived, same-shape allocations are cheap
+- [Built-in functions][9] — native methods (`.split()`, etc.) are CSA/Torque builtins, hard to beat with hand-written JS
+
+Specific patterns:
+
+- [Faster async functions and promises][10] — async/promise optimization history; treat old microtask-cost rules as version-sensitive
+- [Speeding up spread elements][11] — iterator-protocol overhead vs. the array fast path
+- [ECMAScript generators from a performance perspective][12] — Andy Wingo on the `yield` suspend/resume cost
+
+Reference:
+
+- [Node.js profiling][13] — official `node --prof` workflow
+- [Node.js flame graphs][14] — official guide for CPU flame graph analysis
+- [Node.js heap snapshots][15] — official memory diagnostics workflow
+- [ECMA-262][16] — the language spec, e.g. `String.prototype.split` edge cases
+
+Measure before trusting any rule here — V8 behavior shifts between versions; use a harness that defeats dead-code elimination such as [mitata][17].
+
+[1]: https://v8.dev/blog/sparkplug
+[2]: https://v8.dev/blog/maglev
+[3]: https://v8.dev/docs/turbofan
+[4]: https://v8.dev/blog/fast-properties
+[5]: https://v8.dev/blog/elements-kinds
+[6]: https://mrale.ph/blog/2015/01/11/whats-up-with-monomorphism.html
+[7]: https://benediktmeurer.de/2017/12/13/an-introduction-to-speculative-optimization-in-v8/
+[8]: https://v8.dev/blog/trash-talk
+[9]: https://v8.dev/docs/builtin-functions
+[10]: https://v8.dev/blog/fast-async
+[11]: https://v8.dev/blog/spread-elements
+[12]: https://wingolog.org/archives/2013/06/11/ecmascript-generators-from-a-performance-perspective
+[13]: https://nodejs.org/en/learn/getting-started/profiling
+[14]: https://nodejs.org/en/learn/diagnostics/flame-graphs
+[15]: https://nodejs.org/en/learn/diagnostics/memory/using-heap-snapshot
+[16]: https://tc39.es/ecma262/
+[17]: https://github.com/evanwashere/mitata
