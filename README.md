@@ -52,6 +52,14 @@ Guides bug report and pull request investigation and reproduction. Confirms repo
 npx skills add webpro/skills --skill triage-issues
 ```
 
+### xquik-x-data
+
+Use current Xquik docs, OpenAPI, REST API, and remote MCP workflows for source-checked X data tasks.
+
+```sh
+npx skills add webpro/skills --skill xquik-x-data
+```
+
 ## Good Skills Elsewhere
 
 - [mcollina/skills][2]
