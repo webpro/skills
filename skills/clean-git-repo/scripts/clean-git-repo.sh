@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 #
-# clean-git-repo.sh — report and clean up local git branches, stale
-# remote-tracking refs, worktrees, and tags for the repo in the current directory.
+# clean-git-repo.sh — report and clean up local git branches, linked worktrees,
+# stale remote-tracking refs, worktree metadata, and tags.
+#
+# Run it inside a repository, or from a directory whose immediate children are
+# worktrees. Container mode groups children by Git common directory and handles
+# each repository once.
 #
 # Dry-run by default: it fetches+prunes remote-tracking refs (safe, reversible) and
 # prints a categorized plan, but deletes NO branches/tags/remotes without --apply.
@@ -47,6 +51,8 @@ DO_GC=0
 
 die() { printf '%s: %s\n' "$PROG" "$*" >&2; exit 1; }
 
+ORIGINAL_ARGS=("$@")
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --apply) APPLY=1 ;;
@@ -69,7 +75,39 @@ done
 
 case "$AGE_DAYS" in *[!0-9]*|'') die "--age-days must be an integer" ;; esac
 
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git work tree"
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+  case "$0" in
+    /*) SCRIPT_PATH="$0" ;;
+    */*) SCRIPT_PATH="$(cd "${0%/*}" 2>/dev/null && pwd -P)/${0##*/}" ;;
+    *) SCRIPT_PATH=$(command -v "$0") || die "could not resolve script path: $0" ;;
+  esac
+  CONTAINER=$(pwd -P)
+  DISCOVERY_TMP=$(mktemp -d "${TMPDIR:-/tmp}/clean-git-repo-discovery.XXXXXX") || die "mktemp failed"
+  trap 'rm -rf "$DISCOVERY_TMP"' EXIT
+  COMMON_DIRS="$DISCOVERY_TMP/common_dirs"
+  : >"$COMMON_DIRS"
+
+  for candidate in "$CONTAINER"/* "$CONTAINER"/.[!.]* "$CONTAINER"/..?*; do
+    [ -d "$candidate" ] || continue
+    [ "$(git -C "$candidate" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || continue
+    common=$(git -C "$candidate" rev-parse --git-common-dir 2>/dev/null) || continue
+    case "$common" in /*) ;; *) common="$candidate/$common" ;; esac
+    common=$(cd "$common" 2>/dev/null && pwd -P) || continue
+    grep -Fxq "$common" "$COMMON_DIRS" || printf '%s\n' "$common" >>"$COMMON_DIRS"
+  done
+
+  repository_count=$(grep -c . "$COMMON_DIRS") || true
+  [ "${repository_count:-0}" -gt 0 ] ||
+    die "not inside a Git repository and no immediate child worktrees found"
+
+  printf 'Worktree container: %s (%s repositories)\n' "$CONTAINER" "$repository_count"
+  while IFS= read -r common; do
+    [ -n "$common" ] || continue
+    printf '\n=== Repository: %s ===\n' "$common"
+    (cd "$common" && "$SCRIPT_PATH" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}) </dev/null || exit $?
+  done <"$COMMON_DIRS"
+  exit 0
+fi
 
 # Field separator for for-each-ref: ASCII Unit Separator (0x1F). It is non-whitespace
 # (so 'read' preserves empty fields) and forbidden in git ref names (so it never collides).
@@ -85,8 +123,29 @@ DEL_STALE="$TMP/del_stale"         # branch             (STALE -> --stale)
 DEL_AHEAD="$TMP/del_ahead"         # branch             (merged, tip advanced -> --force-merged)
 DEL_SELECTED="$TMP/del_selected"
 DEL_TAGS="$TMP/del_tags"
+WORKTREE_BRANCHES="$TMP/worktree_branches"
+LOCKED_WORKTREES="$TMP/locked_worktrees"
+DETACHED_WORKTREES="$TMP/detached_worktrees"
+WORKTREE_LIST="$TMP/worktree_list"
 : >"$MERGED_HEADS"
 : >"$DEL_SAFE"; : >"$DEL_GONE"; : >"$DEL_STALE"; : >"$DEL_AHEAD"; : >"$DEL_SELECTED"; : >"$DEL_TAGS"
+: >"$WORKTREE_BRANCHES"; : >"$LOCKED_WORKTREES"; : >"$DETACHED_WORKTREES"
+
+git worktree list --porcelain >"$WORKTREE_LIST"
+FIRST_WORKTREE=$(sed -n '1s/^worktree //p' "$WORKTREE_LIST")
+MAIN_WORKTREE=""
+if [ -n "$FIRST_WORKTREE" ] &&
+   [ "$(git -C "$FIRST_WORKTREE" rev-parse --is-bare-repository 2>/dev/null || true)" != true ]; then
+  MAIN_WORKTREE="$FIRST_WORKTREE"
+fi
+awk '
+  /^worktree / { path = substr($0, 10) }
+  /^locked($| )/ { print path }
+' "$WORKTREE_LIST" >"$LOCKED_WORKTREES"
+awk '
+  /^worktree / { path = substr($0, 10) }
+  /^detached$/ { print path }
+' "$WORKTREE_LIST" >"$DETACHED_WORKTREES"
 
 # --- determine remote, base, current ----------------------------------------
 REMOTE=$(git remote | grep -Fx origin || git remote | head -1)
@@ -172,6 +231,35 @@ matches_keep() {
   return 1
 }
 
+worktree_protection_reason() { # worktree-path
+  local wt="$1" status
+  if [ "$wt" = "$MAIN_WORKTREE" ]; then
+    echo "main worktree"
+    return 0
+  fi
+  if grep -Fxq "$wt" "$LOCKED_WORKTREES"; then
+    echo "locked worktree"
+    return 0
+  fi
+  if ! status=$(git -C "$wt" status --porcelain --untracked-files=normal --ignored 2>/dev/null); then
+    echo "unavailable worktree"
+    return 0
+  fi
+  if [ -n "$status" ]; then
+    if printf '%s\n' "$status" | grep -qv '^!! '; then
+      echo "dirty worktree"
+    else
+      echo "worktree contains ignored files"
+    fi
+    return 0
+  fi
+  if git -C "$wt" submodule status --recursive 2>/dev/null | grep -q .; then
+    echo "worktree contains submodules"
+    return 0
+  fi
+  return 1
+}
+
 # Human push-state for a branch, so confirm tiers reveal whether deleting loses work.
 push_state() { # track-string upstream-short
   local track="$1" up="$2" n
@@ -198,16 +286,34 @@ report_remote="$TMP/r_remote"; : >"$report_remote"
 report_remote_skip="$TMP/r_remote_skip"; : >"$report_remote_skip"
 report_tags="$TMP/r_tags"; : >"$report_tags"
 
+while IFS= read -r wt; do
+  [ -n "$wt" ] || continue
+  if [ "$wt" = "$MAIN_WORKTREE" ]; then reason="main worktree, detached HEAD"
+  elif grep -Fxq "$wt" "$LOCKED_WORKTREES"; then reason="locked worktree, detached HEAD"
+  else reason="detached HEAD"; fi
+  printf '  %-45s %s; worktree %s\n' "<detached>" "$reason" "$wt" >>"$report_prot"
+  n_prot=$((n_prot + 1))
+done <"$DETACHED_WORKTREES"
+
 while IFS="$SEP" read -r br track up wt cdate; do
   [ -z "$br" ] && continue
+  wt_detail=""
+  if [ -n "$wt" ]; then
+    printf '%s%s%s\n' "$br" "$SEP" "$wt" >>"$WORKTREE_BRANCHES"
+    wt_detail="; worktree $wt"
+  fi
 
-  if [ "$br" = "$BASE" ] || [ "$br" = "$CURRENT" ] || [ -n "$wt" ] || matches_keep "$br"; then
+  reason=""
+  if [ "$br" = "$BASE" ] || [ "$br" = "$CURRENT" ] || matches_keep "$br"; then
     if [ "$br" = "$BASE" ]; then reason="default branch"
     elif [ "$br" = "$CURRENT" ]; then reason="current branch"
-    elif [ -n "$wt" ]; then reason="checked out in worktree ${wt##*/}"
     elif matches_keep "$br"; then reason="--keep match"
     else reason="protected"; fi
-    printf '  %-45s %s\n' "$br" "$reason" >>"$report_prot"
+  elif [ -n "$wt" ]; then
+    reason=$(worktree_protection_reason "$wt") || reason=""
+  fi
+  if [ -n "$reason" ]; then
+    printf '  %-45s %s%s\n' "$br" "$reason" "$wt_detail" >>"$report_prot"
     n_prot=$((n_prot + 1)); continue
   fi
 
@@ -216,13 +322,13 @@ while IFS="$SEP" read -r br track up wt cdate; do
   if [ "$state" = MERGED ]; then
     if git merge-base --is-ancestor "$br" "$BASEREF" 2>/dev/null; then
       printf '%s\n' "$br" >>"$DEL_SAFE"
-      printf '  %-45s PR merged\n' "$br" >>"$report_merged"
+      printf '  %-45s PR merged%s\n' "$br" "$wt_detail" >>"$report_merged"
       n_merged=$((n_merged + 1)); continue
     fi
     rel=$(merged_tip_rel "$br")
     if [ "$rel" = safe ]; then
       printf '%s\n' "$br" >>"$DEL_SAFE"
-      printf '  %-45s PR merged (squashed; tip in merged head)\n' "$br" >>"$report_merged"
+      printf '  %-45s PR merged (squashed; tip in merged head)%s\n' "$br" "$wt_detail" >>"$report_merged"
       n_merged=$((n_merged + 1)); continue
     fi
     # gh says merged, but the tip is not provably contained in the merged head — force-delete
@@ -233,27 +339,27 @@ while IFS="$SEP" read -r br track up wt cdate; do
       *)   detail="tip is $rel commits past the merged head" ;;
     esac
     echo "$br" >>"$DEL_AHEAD"
-    printf '  %-45s PR merged, but %s; %s\n' "$br" "$detail" "$(push_state "$track" "$up")" >>"$report_ahead"
+    printf '  %-45s PR merged, but %s; %s%s\n' "$br" "$detail" "$(push_state "$track" "$up")" "$wt_detail" >>"$report_ahead"
     n_ahead=$((n_ahead + 1)); continue
   fi
 
   if git merge-base --is-ancestor "$br" "$BASEREF" 2>/dev/null; then
     printf '%s\n' "$br" >>"$DEL_SAFE"
-    printf '  %-45s merged into %s\n' "$br" "$BASEREF" >>"$report_merged"
+    printf '  %-45s merged into %s%s\n' "$br" "$BASEREF" "$wt_detail" >>"$report_merged"
     n_merged=$((n_merged + 1)); continue
   fi
 
   if [ "$track" = "[gone]" ]; then
     echo "$br" >>"$DEL_GONE"
     ahead=$(git rev-list --count "$BASEREF..$br" 2>/dev/null || echo 0)
-    printf '  %-45s upstream gone; %s commit(s) ahead of %s\n' "$br" "${ahead:-0}" "$BASE" >>"$report_gone"
+    printf '  %-45s upstream gone; %s commit(s) ahead of %s%s\n' "$br" "${ahead:-0}" "$BASE" "$wt_detail" >>"$report_gone"
     n_gone=$((n_gone + 1)); continue
   fi
 
   if [ -n "$cdate" ] && [ "$cdate" -lt "$STALE_CUTOFF" ]; then
     age_days=$(( (NOW - cdate) / 86400 ))
     echo "$br" >>"$DEL_STALE"
-    printf '  %-45s last commit %sd ago; %s\n' "$br" "$age_days" "$(push_state "$track" "$up")" >>"$report_stale"
+    printf '  %-45s last commit %sd ago; %s%s\n' "$br" "$age_days" "$(push_state "$track" "$up")" "$wt_detail" >>"$report_stale"
     n_stale=$((n_stale + 1)); continue
   fi
 
@@ -326,7 +432,8 @@ fi
 
 # --- report -----------------------------------------------------------------
 echo
-echo "Repo: $(git rev-parse --show-toplevel)"
+REPO_DISPLAY=$(git rev-parse --show-toplevel 2>/dev/null || git rev-parse --absolute-git-dir)
+echo "Repo: $REPO_DISPLAY"
 echo "Default branch: $BASE (base ref: $BASEREF)   Current: ${CURRENT:-<detached>}"
 if [ "$GH_OK" = 1 ]; then echo "GitHub: $(grep -c . "$MERGED_HEADS") merged PRs known via gh"
 else echo "GitHub: gh unavailable — squash-merge detection limited to [gone] + ancestor checks"; fi
@@ -360,9 +467,32 @@ if [ "$APPLY" != 1 ]; then
 fi
 
 deleted_remote=0
+worktree_for_branch() { # branch
+  local wanted="$1" name path
+  while IFS="$SEP" read -r name path; do
+    if [ "$name" = "$wanted" ]; then
+      printf '%s\n' "$path"
+      return 0
+    fi
+  done <"$WORKTREE_BRANCHES"
+}
+
 del_branch() { # branch (force -D; SAFE-tier containment already proven, confirm tiers are opt-in)
-  local b="$1" local_oid detail remote_oid
+  local b="$1" local_oid detail remote_oid wt reason
   local_oid=$(git rev-parse --verify --quiet "refs/heads/$b" 2>/dev/null || true)
+  wt=$(worktree_for_branch "$b")
+  if [ -n "$wt" ]; then
+    if reason=$(worktree_protection_reason "$wt"); then
+      echo "  SKIP $b ($reason: $wt)"
+      return
+    fi
+    if git worktree remove "$wt" >/dev/null 2>&1; then
+      echo "  removed worktree $wt"
+    else
+      echo "  SKIP $b (git refused to remove worktree: $wt)"
+      return
+    fi
+  fi
   if git branch -D "$b" >/dev/null 2>&1; then
     echo "  deleted $b"
     if [ "$DO_REMOTE" = 1 ] && [ "$HAS_REMOTE" = 1 ] && detail=$(remote_delete_reason "$b" "$local_oid"); then

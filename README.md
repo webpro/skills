@@ -16,8 +16,8 @@ Everything is skill issues
 
 Prune a git repository's merged, gone, and stale branches (squash-merges
 included), plus stale remote-tracking refs, worktrees, and local-only tags.
-Reports as a dry run first; never touches the current, default, protected, or
-worktree-checked-out branches.
+Reports as a dry run first; never touches current, default, or protected
+branches, nor locally modified worktrees, including ones with ignored files.
 
 ```sh
 npx skills add webpro/skills --skill clean-git-repo
