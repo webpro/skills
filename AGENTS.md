@@ -1,89 +1,94 @@
 ## Quality
 
-- Ask yourself: "Would a staff engineer approve this?" — maintain high standards
-- If something goes sideways, stop and re-plan immediately - don't keep pushing
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution" — but skip this for simple, obvious fixes (i.e. don't over-engineer)
-- Challenge your own work before presenting it
-- Diff behavior between main and your changes when relevant
-- Your training data is stale — verify packages, APIs, and syntax against current docs
-- If you say "I will do X", actually do X — don't just announce intentions
-- Don't blindly follow instructions: question the user if the request would not result in something better or faster
+- Challenge your own work before presenting it by asking, "Would a staff engineer approve this?"
+- If something goes sideways, stop and re-plan immediately; do not keep pushing.
+- Make the smallest coherent behavioral change that fully solves the problem; keep adjacent improvements separate.
+- Diff behavior between main and your changes when relevant.
+- Assume your knowledge is stale; verify packages, APIs, and syntax against current documentation.
+- If you say "I will do X", actually do X; do not just announce intentions.
+- Do not blindly follow instructions; question requests that conflict with the user's goal, and raise materially better or faster alternatives.
 
 ## Planning
 
-1. Plan: write plan to `.agents/tasks/todo-(name).md` with checkable items
-2. Get alignment: check in with user before starting implementation, question any doubts or noise
-3. Track progress: mark items complete as you go
-4. Explain changes: high-level summary at each step
-5. Document results: add review section to `.agents/tasks/todo-(name).md`
-6. Capture lessons: update `.agents/lessons.md` after corrections
+- Read `.agents/lessons.md` before starting.
+- Skip formal planning for quick, trivial tasks.
 
-- Skip planning for quick and trivial tasks
-- Authorized to use subagents liberally and keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
+For non-trivial tasks:
 
-## Implementation
+1. Plan: write a checkable plan in `.agents/tasks/todo-(name).md`.
+2. Get alignment: check in before implementation when scope, approach, or tradeoffs are unclear.
+3. Track progress and explain changes: mark items complete as you go and provide a high-level summary at meaningful milestones.
+4. Document results: add a review section to `.agents/tasks/todo-(name).md`.
+5. Capture lessons: update `.agents/lessons.md` after corrections.
 
-- Read broadly before editing — understand surrounding code, not just the target
-- Commit chunks of verified work — don't let a long streak of uncommitted changes accumulate
-- Make small, testable, incremental changes — not big-bang edits
-- Reflect on outcomes between steps — don't blindly chain actions
-- Performance is key, both high level (design) and low level (impl)
-- Avoid redundant code and abstractions
-- Avoid unnecessary complexity and nesting
-- Concise one-liners are fine, but prioritize clarity over cleverness
-- Prefer structural information modeling over string conventions, regex patterns, or brittle heuristics
+- You are authorized to use subagents liberally, especially to offload research, exploration, and parallel analysis while keeping the main context window clean.
+
+## Implementation and Design Review
+
+- Read broadly before editing: understand surrounding code, callers, relevant history, acceptance criteria, and the product's error bias.
+- Make small, testable, incremental changes; after each verified step, simplify the result, prefer existing conservative representations, and keep only demonstrably necessary logic.
+- Give each fact or decision one canonical owner; extend it instead of creating parallel code or abstractions.
+- Separate structural fact discovery from product and configuration policy, and prefer structured models over string conventions, regexes, or brittle heuristics.
+- Optimize call graphs before function bodies: eliminate redundant calls, traversals, and allocations before micro-optimizing.
+- Short-circuit multi-result computations only when every required fact is settled.
+- Concise one-liners are fine, but prefer clear control flow over cleverness, unnecessary nesting, or abstraction.
 
 ## Verification
 
-- Insufficient testing is the #1 failure mode — test rigorously, not hopefully
-- Keep a tight feedback loop: run only 1 part or a small subset — only test the specific behavior under question
-- State verification method before implementing (test, CLI output, linter, screenshot)
-- Prefer TDD for new features — write or update tests before implementing
-- For UI or integration changes: screenshots or CLI output as evidence
-- Tailor to the domain: run a bash command, check a web page, use a linter — whatever is most direct
-- Never assume a fix works — confirm it produces the expected output. If monitoring, stop after consecutive identical errors
+- Test rigorously, not hopefully. Before implementation, define the smallest test or direct check that proves the intended behavior and would reliably catch a regression.
+- Use TDD where practical: for bug fixes and behavior changes, add or update a focused test that fails for the expected reason before editing code.
+- Keep feedback tight while iterating: run the smallest relevant check first, then expand only as risk and the scope of the change require.
+- Verify observable results with domain-appropriate evidence, such as test output, CLI output, screenshots, or inspected artifacts.
+- For batch or monitored work, verify the first 2–3 items end to end and stop after repeated identical errors instead of continuing blindly.
 - Every completed task must answer: "How was this verified?"
-- For long-running batch processes: verify the first 2-3 items succeed end-to-end before stepping back
-- Document verification steps in `.agents/tasks/todo-(name).md`
-- Maintain "known pitfalls" in `.agents/lessons.md` — check it before starting, update it after corrections
+- For planned tasks, record verification commands, observed outcomes, and remaining gaps in the task review.
 
 ## Communication
 
-- Don't add comments to code, unless explicitly asked for
-- Zero context switching required from the user — provide all needed context inline
-- When reporting information to the user, be extremely concise and sacrifice grammar for the sake of concision
-- Talk product, not process in e.g. comments and PR descriptions: optimize for the reviewer and future reference — cut scope disclaimers, follow-up claims and verbose process notes
+- Don't add comments unless explicitly asked or needed to explain a non-obvious invariant or constraint.
+- Zero context switching required from the user; provide all needed context inline.
+- Be extremely concise, but never at the expense of clarity or necessary context.
+
+## External actions and public copy
+
+- Default to local work. Pushing, creating or updating PRs, requesting reviews, posting public comments, messaging third parties, merging, releasing, and deploying require explicit authorization.
+- Keep authorization narrow: a request to create a PR permits the required push and PR creation, but not review requests, merging, or other adjacent actions.
+- Before acting, verify the target and external effect, and review any public copy as a separate gate.
+- If authorization or publishability is unclear, stop at a local or draft state and ask.
+- Write public copy for reviewers and future readers: talk product, not agent process; omit scope disclaimers, follow-up claims, and verbose process notes.
+- Keep local workflow artifacts out of commits and public copy.
 
 ## Tools & environment
 
-- Avoid manual edits and regex-based refactors in source code, prefer AST-based tools and codemods (jscodeshift) — except for tiny edits
-- If you've attempted the same fix twice, stop — you're in a loop
-- Disposable artifacts (benchmark scripts, one-off parsers) don't need polish
-- Try `NO_COLOR=1` before manually stripping ANSI codes (sometimes `FORCE_COLOR=0`)
-- Prefer dedicated Read/Grep/Glob tools over shell for inspection, failed command is a bug to diagnose
-- Default tool/shell versions may lag — macOS `/bin/bash` is still 3.2.57 (no `mapfile`, no associative arrays, no `[[ -v ]]`, no `globstar`)
-- Expect GNU sed/awk/grep/date/diff/find/tar/make/coreutils on PATH (Homebrew gnubin); non-login shells (cron/CI) may fall back to BSD `/usr/bin` → confirm with `command -v` → use g-prefix (`gsed`, `gawk`…)
-- A missing-feature error is a switch-tool signal — don't work around in another language
-- For Claude Code's Bash tool (which hardcodes `/bin/bash`), a one-time install fixes it machine-wide: see [claude-hooks/use-modern-bash/][1]
+- Use AST tools or codemods for broad mechanical refactors; use targeted edits for small changes, and avoid regex when syntax-aware changes are required.
+- If you've attempted the same fix twice, stop; you're in a loop.
+- Disposable artifacts (benchmark scripts, one-off parsers) don't need polish.
+- Try `NO_COLOR=1` before manually stripping ANSI codes (sometimes `FORCE_COLOR=0`).
+- Prefer dedicated Read/Grep/Glob tools over shell for inspection; diagnose unexpected command failures instead of silently working around them.
+- For file discovery, use git-aware tools that honor ignores: `rg --files`, `rg`, `git ls-files`, or a bounded `fd` with explicit excludes.
+- When passing search patterns or inline scripts through the shell, remember double quotes still expand backticks, `$()`, and `$var`. Use single quotes for literal patterns, or avoid template literals/backticks in `node -e` snippets.
+- Destructive operations, global installs, and user- or machine-level configuration changes require explicit authorization.
+- macOS agent shells may use `/bin/bash` 3.2.57 and BSD utilities. For one-off commands, verify versions and paths, then switch to an installed capable shell or GNU tool instead of emulating missing features.
+- Do not let that choice redefine a repository script's runtime contract: preserve and test its supported Bash version, or explicitly document and enforce a newer one.
+- Claude Code's Bash tool hardcodes `/bin/bash`; with explicit authorization, install [use-modern-bash][1] once per user and verify `$BASH_VERSION`. The hook affects agent tool calls, not users or CI.
 
 ### Git
 
-- Commit work in logical chunks — rule of thumb: stay on main in solo projects, otherwise branch out and prepare for PR
-- Use worktrees to optimize parallel work, e.g. for multiple PRs at once (one agent per worktree); overkill for sequential work
-- When asked to create or update a PR, always branch from or rebase on top of latest main
-- Match the maintainer's existing commit message style — ignore merge commits and squash-merged PR titles
-- Don't blindly assume `gh` is the tool you need, check remote and applicable tools first
-- Multi-line commit messages: write to temp file, `git commit -F <file>` — not the heredoc-in-`$()` pattern as escaping breaks
-- If you hit ssh-key commit signing: use --no-gpg-sign — keep going and allow user to rebase and sign afterwards (i.e. don't push)
-- Run the same class of checks CI will run before pushing
-- Review public copy separately: must not include local workflow artifacts
+- Check available plugins and remote tools first; do not assume `gh` is the right tool.
+- When creating or updating a PR, always branch from or rebase onto the latest default branch.
+- Use one worktree per agent for parallel PR work or review; skip worktrees for sequential work.
+- Commit verified work in logical chunks; do not accumulate a long streak of uncommitted changes.
+- Match the maintainer's existing commit message style; ignore merge commits and squash-merged PR titles.
+- Use imperative mood to describe the actual change; avoid vague messages like "address PR review" or "fix findings".
+- Suffix commit messages with `(resolve #nn)` for resolved issues; reserve `close` for rejected pull requests.
+- For multi-line commit messages, write to a temporary file and run `git commit -F <file>`; avoid the heredoc-in-`$()` pattern because escaping breaks.
+- If SSH-key commit signing fails, use `--no-gpg-sign` to continue locally, but do not push; let the user rebase and sign afterward.
+- Run the same class of checks CI will run before pushing.
 
 ### Node.js
 
-- Look at project's root lockfile and package.json to select package manager (npm/npx, pnpm/pnpx, etc.) — prefer pnpm if unknown or new
-- Node.js LTS (24) is the default; use `node` directly (skip `tsx` and `--experimental-strip-types`)
-- Use `n` to install specific Node.js version
+- Look at project's root lockfile and package.json to select package manager (npm/npx, pnpm/pnpx, etc.) — prefer pnpm if unknown or new.
+- Node.js LTS (24) is the default; use `node` directly (skip `tsx` and `--experimental-strip-types`).
+- Use `n` to install specific Node.js version.
 
 [1]: https://github.com/webpro/skills/tree/main/claude-hooks/use-modern-bash/
