@@ -43,6 +43,15 @@ code.
 npx skills add webpro/skills --skill optimize-javascript
 ```
 
+### send-ntfy-notification
+
+Send a plain-text ntfy notification after a task is verified complete and the
+notification is authorized.
+
+```sh
+npx skills add webpro/skills --skill send-ntfy-notification
+```
+
 ### suggest-pr-reviewers
 
 Find relevant PR reviewers based on code ownership and recency of contributions.
