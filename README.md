@@ -33,6 +33,15 @@ TypeScript codebase.
 npx skills add webpro/skills --skill configure-knip
 ```
 
+### cross-review
+
+Hand local work, a branch, commit, or focused code scope directly to an
+different agentic reviewer with balanced defaults.
+
+```sh
+npx skills add webpro/skills --skill cross-review
+```
+
 ### optimize-javascript
 
 V8/Node.js performance patterns for hot paths, parsers, and core libraries in
