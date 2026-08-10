@@ -74,16 +74,9 @@ For non-trivial tasks:
 
 ### Git
 
-- Check available plugins and remote tools first; do not assume `gh` is the right tool.
-- When creating or updating a PR, always branch from or rebase onto the latest default branch.
-- Use one worktree per agent for parallel PR work or review; skip worktrees for sequential work.
 - Commit verified work in logical chunks; do not accumulate a long streak of uncommitted changes.
-- Match the maintainer's existing commit message style; ignore merge commits and squash-merged PR titles.
-- Use imperative mood to describe the actual change; avoid vague messages like "address PR review" or "fix findings".
-- Suffix commit messages with `(resolve #nn)` for resolved issues; reserve `close` for rejected pull requests.
-- For multi-line commit messages, write to a temporary file and run `git commit -F <file>`; avoid the heredoc-in-`$()` pattern because escaping breaks.
-- If SSH-key commit signing fails, use `--no-gpg-sign` to continue locally, but do not push; let the user rebase and sign afterward.
-- Run the same class of checks CI will run before pushing.
+- For commit, pull request, and rebase mechanics, use the `using-git` skill.
+- Before repository work, run `git rev-parse --is-inside-work-tree 2>/dev/null || true`. If it does not print true: use the `using-git-worktrees` skill.
 
 ### Node.js
 

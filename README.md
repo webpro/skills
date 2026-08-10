@@ -72,6 +72,24 @@ issue, or error report to investigate.
 npx skills add webpro/skills --skill triage-issues
 ```
 
+### using-git
+
+House commit, pull request, and rebase workflow, including commit style, issue
+references, and commit-signing failures.
+
+```sh
+npx skills add webpro/skills --skill using-git
+```
+
+### using-git-worktrees
+
+Resolve regular checkouts and single- or mixed-repository worktree containers
+from cwd while preserving their shared `.agents` workspace.
+
+```sh
+npx skills add webpro/skills --skill using-git-worktrees
+```
+
 ## Good Skills Elsewhere
 
 | Repository                                        | Install                                                                   |
