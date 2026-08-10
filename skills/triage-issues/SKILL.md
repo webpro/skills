@@ -1,6 +1,10 @@
 ---
 name: triage-issues
-description: Guides bug report and pull request investigation and reproduction. Confirms reported behavior is wrong, reproduces issues locally, and checks for correct-by-design behavior before writing fixes. Use when given a bug report, issue, or error report to investigate.
+description: >-
+  Guides bug report and pull request investigation and reproduction. Confirms
+  reported behavior is wrong, reproduces issues locally, and checks for
+  correct-by-design behavior before writing fixes. Use when given a bug report,
+  issue, or error report to investigate.
 ---
 
 - When given a bug report or a link to issue or pull request, first confirm current behavior is actually wrong

@@ -4,11 +4,11 @@ Everything is skill issues
 
 ## Options
 
-| Option                   | Description                                                                  |
-| ------------------------ | ---------------------------------------------------------------------------- |
-| -g, --global             | Install to user directory instead of project                                 |
-| -a, --agent \<agents...> | Target specific agents (e.g., claude-code, codex), see [Available Agents][1] |
-| -l, --list               | List available skills without installing                                     |
+| Option                   | Description                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------- |
+| -g, --global             | Install to user directory instead of project                                    |
+| -a, --agent \<agents...> | Target specific agents (e.g. `claude-code`, `codex`), see [Available Agents][1] |
+| -l, --list               | List available skills without installing                                        |
 
 ## In This Repo
 
@@ -92,17 +92,17 @@ npx skills add webpro/skills --skill using-git-worktrees
 
 ## Good Skills Elsewhere
 
-| Repository                                        | Install                                                                   |
-| ------------------------------------------------- | ------------------------------------------------------------------------- |
-| [openclaw/agent-skills][2]                        | `npx skills add openclaw/agent-skills --skill autoreview`                 |
-| [mcollina/skills][3]                              | `npx skills add mcollina/skills --skill node --skill typescript-magician` |
-| [theclaymethod/unslop][4]                         | `npx skills add theclaymethod/unslop`                                     |
-| [mattpocock/skills][5]                            | `npx skills add mattpocock/skills`                                        |
-| [currents-dev/playwright-best-practices-skill][6] | `npx skills add currents-dev/playwright-best-practices-skill`             |
+| Repository                                        | Install                                                                                      |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| [mcollina/skills][3]                              | `npx skills add mcollina/skills --skill node --skill typescript-magician`                    |
+| [theclaymethod/unslop][4]                         | `npx skills add theclaymethod/unslop`                                                        |
+| [mattpocock/skills][5]                            | `npx skills add mattpocock/skills`                                                           |
+| [currents-dev/playwright-best-practices-skill][6] | `npx skills add currents-dev/playwright-best-practices-skill`                                |
+| [obra/superpowers][7]                             | `npx skills add obra/superpowers --skill systematic-debugging --skill receiving-code-review` |
 
 [1]: https://github.com/vercel-labs/skills#supported-agents
-[2]: https://github.com/openclaw/agent-skills
 [3]: https://github.com/mcollina/skills
 [4]: https://github.com/theclaymethod/unslop
 [5]: https://github.com/mattpocock/skills
 [6]: https://github.com/currents-dev/playwright-best-practices-skill
+[7]: https://github.com/obra/superpowers
