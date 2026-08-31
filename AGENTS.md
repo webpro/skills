@@ -50,12 +50,16 @@ For non-trivial tasks:
 - Zero context switching required from the user; provide all needed context inline.
 - Be extremely concise, but never at the expense of clarity or necessary context.
 
-## External actions and public copy
+## External actions
 
 - Default to local work. Pushing, creating or updating PRs, requesting reviews, posting public comments, messaging third parties, merging, releasing, and deploying require explicit authorization.
 - Keep authorization narrow: a request to create a PR permits the required push and PR creation, but not review requests, merging, or other adjacent actions.
 - Before acting, verify the target and external effect, and review any public copy as a separate gate.
 - If authorization or publishability is unclear, stop at a local or draft state and ask.
+
+## Public copy
+
+- Use `review-prose` before delivering documentation, review findings, or other public technical copy you drafted or revised.
 - Write public copy for reviewers and future readers: talk product, not agent process; omit scope disclaimers, follow-up claims, and verbose process notes.
 - Keep local workflow artifacts out of commits and public copy.
 - Keep hard-wraps, em-dashes and curly quotes out of public copy, including comments and pull requests. Use Markdown when target supports it; omit excessive bold markup.
