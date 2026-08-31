@@ -1,6 +1,14 @@
 ---
 name: optimize-javascript
-description: V8/Node.js performance patterns for hot paths, parsers, and core libraries in JavaScript/TypeScript. Use when writing or reviewing performance-sensitive JS/TS code.
+description: >-
+  V8/Node.js performance patterns for hot paths, parsers, and core libraries in
+  JavaScript/TypeScript. Use whenever JavaScript or TypeScript is slow or should
+  get faster: hot loops, tokenizers and parsers, heavy allocation or GC pressure,
+  megamorphic call sites, deoptimization, memory growth, slow startup or module
+  load. Triggers on "too slow", "speed up", "make it faster", "optimize this",
+  "reduce allocations", "bottleneck", "profile it", and on any performance review
+  of .js, .ts, .mjs, or .cjs code, including when the user never says
+  "performance".
 ---
 
 ## Core principles
