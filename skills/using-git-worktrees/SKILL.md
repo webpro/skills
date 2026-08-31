@@ -1,9 +1,11 @@
 ---
 name: using-git-worktrees
 description: >-
-  Discover Git worktree layouts from the starting directory and preserve their
-  shared workspace state. Use when cwd may be a worktree container, when
-  selecting or creating a worktree within one, or when cwd is not a Git repo.
+  Discover and select Git worktree layouts from the starting directory. Use
+  when asked to find, choose, reuse, or create a checkout or worktree; when cwd
+  is above checkouts, a worktree container, or not a Git repo; or when deciding
+  where shared .agents state belongs. Do not use for ordinary Git history,
+  commit, or pull request work, or for bulk cleanup.
 ---
 
 # Using Git Worktrees

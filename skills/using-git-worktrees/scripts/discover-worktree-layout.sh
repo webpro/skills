@@ -111,3 +111,4 @@ for repository in "${repositories[@]}"; do
   container=$(container_for "$repository")
   [ -n "$container" ] && printf 'container=%s\n' "$container"
 done
+exit 0
