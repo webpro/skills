@@ -8,6 +8,7 @@ Everything is skill issues
 | ------------------------ | ------------------------------------------------------------------------------- |
 | -g, --global             | Install to user directory instead of project                                    |
 | -a, --agent \<agents...> | Target specific agents (e.g. `claude-code`, `codex`), see [Available Agents][1] |
+| -s, --skill \<skills...> | Install specific skills by name (use `'*'` for all skills)                      |
 | -l, --list               | List available skills without installing                                        |
 
 ## In This Repo
@@ -35,21 +36,45 @@ npx skills add webpro/skills --skill configure-knip
 
 ### cross-review
 
-Hand local work, a branch, commit, or focused code scope directly to an
-different agentic reviewer with balanced defaults.
+Hand local work, a branch, commit, or focused code scope to a different coding agent for an independent review with balanced model defaults.
 
 ```sh
 npx skills add webpro/skills --skill cross-review
 ```
 
+### eval-skill
+
+Measure whether a skill fires when it should and whether its output beats no
+skill at all, then fix what the measurement exposes. Bundles a trigger harness
+that drives the installed skill against the rest of your skills.
+
+```sh
+npx skills add webpro/skills --skill eval-skill
+```
+
 ### optimize-javascript
 
-V8/Node.js performance patterns for hot paths, parsers, and core libraries in
-JavaScript/TypeScript. Use when writing or reviewing performance-sensitive JS/TS
-code.
+Optimize slow JavaScript and TypeScript hot paths, parsers, allocation-heavy code, startup, and module loading for V8 and Node.js.
 
 ```sh
 npx skills add webpro/skills --skill optimize-javascript
+```
+
+### publish-pr-review
+
+Publish an already-completed pull request review as one concise verdict with
+actionable findings attached inline.
+
+```sh
+npx skills add webpro/skills --skill publish-pr-review
+```
+
+### review-prose
+
+Draft, audit, and revise documentation and public technical copy while preserving facts, voice, and project style.
+
+```sh
+npx skills add webpro/skills --skill review-prose
 ```
 
 ### send-ntfy-notification
@@ -63,8 +88,7 @@ npx skills add webpro/skills --skill send-ntfy-notification
 
 ### suggest-pr-reviewers
 
-Find relevant PR reviewers based on code ownership and recency of contributions.
-Use when creating PRs or needing to identify who should review code changes.
+Rank candidate reviewers by ownership and recency among authors of existing lines changed in a diff, using chunk-level Git blame.
 
 ```sh
 npx skills add webpro/skills --skill suggest-pr-reviewers
@@ -92,8 +116,7 @@ npx skills add webpro/skills --skill using-git
 
 ### using-git-worktrees
 
-Resolve regular checkouts and single- or mixed-repository worktree containers
-from cwd while preserving their shared `.agents` workspace.
+Discover, select, reuse, or create checkouts and worktrees from any starting directory while keeping shared `.agents` state at the workspace root.
 
 ```sh
 npx skills add webpro/skills --skill using-git-worktrees
@@ -103,15 +126,15 @@ npx skills add webpro/skills --skill using-git-worktrees
 
 | Repository                                        | Install                                                                                      |
 | ------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| [mcollina/skills][3]                              | `npx skills add mcollina/skills --skill node --skill typescript-magician`                    |
-| [theclaymethod/unslop][4]                         | `npx skills add theclaymethod/unslop`                                                        |
-| [mattpocock/skills][5]                            | `npx skills add mattpocock/skills`                                                           |
-| [currents-dev/playwright-best-practices-skill][6] | `npx skills add currents-dev/playwright-best-practices-skill`                                |
-| [obra/superpowers][7]                             | `npx skills add obra/superpowers --skill systematic-debugging --skill receiving-code-review` |
+| [mcollina/skills][2]                              | `npx skills add mcollina/skills --skill node --skill typescript-magician`                    |
+| [theclaymethod/unslop][3]                         | `npx skills add theclaymethod/unslop`                                                        |
+| [mattpocock/skills][4]                            | `npx skills add mattpocock/skills`                                                           |
+| [currents-dev/playwright-best-practices-skill][5] | `npx skills add currents-dev/playwright-best-practices-skill`                                |
+| [obra/superpowers][6]                             | `npx skills add obra/superpowers --skill systematic-debugging --skill receiving-code-review` |
 
 [1]: https://github.com/vercel-labs/skills#supported-agents
-[3]: https://github.com/mcollina/skills
-[4]: https://github.com/theclaymethod/unslop
-[5]: https://github.com/mattpocock/skills
-[6]: https://github.com/currents-dev/playwright-best-practices-skill
-[7]: https://github.com/obra/superpowers
+[2]: https://github.com/mcollina/skills
+[3]: https://github.com/theclaymethod/unslop
+[4]: https://github.com/mattpocock/skills
+[5]: https://github.com/currents-dev/playwright-best-practices-skill
+[6]: https://github.com/obra/superpowers
