@@ -30,10 +30,32 @@ display_width() {
 }
 
 # --- Arguments ---
-while getopts "n:" opt; do
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [-n limit] [branch] [base]
+
+Rank reviewers for a change by who wrote the lines it touches, scoring
+chunk-level git blame on the base revision by ownership and recency.
+Run from anywhere inside the repository under review.
+
+  -n limit   maximum reviewers to show (default: $MAX_RESULTS)
+  branch     branch to analyze (default: HEAD)
+  base       branch to diff against (default: main)
+  -h         show this help
+
+Requires: git, awk, and perl (perl is used only to align unicode names).
+EOF
+}
+
+case "${1:-}" in
+  --help) usage; exit 0 ;;
+esac
+
+while getopts "n:h" opt; do
   case $opt in
     n) MAX_RESULTS="$OPTARG" ;;
-    *) echo "Usage: $0 [-n limit] [branch] [base]" >&2; exit 1 ;;
+    h) usage; exit 0 ;;
+    *) usage >&2; exit 1 ;;
   esac
 done
 shift $((OPTIND - 1))
@@ -41,8 +63,21 @@ shift $((OPTIND - 1))
 BRANCH="${1:-HEAD}"
 BASE="${2:-main}"
 
-# Run from repo root (diff paths are repo-relative)
-cd "$(git rev-parse --show-toplevel)"
+# Run from repo root (diff paths are repo-relative). Resolve it before cd'ing:
+# `cd ""` succeeds silently, so a failed substitution would leave us outside the
+# repository and surface later as a confusing `git diff --no-index` error.
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  echo "Not a git repository: $(pwd)" >&2
+  exit 1
+}
+cd "$repo_root"
+
+for rev in "$BASE" "$BRANCH"; do
+  git rev-parse --verify --quiet "$rev^{commit}" >/dev/null || {
+    echo "Unknown revision: $rev" >&2
+    exit 1
+  }
+done
 
 # Validate there are changes
 git diff "$BASE"..."$BRANCH" --quiet 2>/dev/null && {
@@ -70,9 +105,16 @@ git diff "$BASE"..."$BRANCH" --unified=0 2>/dev/null | while IFS= read -r line; 
   if [[ "$line" == @@* ]]; then
     hunk="${line#@@ -}"
     hunk="${hunk%% +*}"
-    start="${hunk%%,*}"
-    count="${hunk#*,}"
-    [[ "$count" == "$start" ]] && count=1
+    # `@@ -5 +5 @@` omits the count, meaning exactly one line. Test for the
+    # comma itself: comparing count to start instead silently truncates every
+    # hunk whose length equals its start line (`@@ -3,3 @@` became one line).
+    if [[ "$hunk" == *,* ]]; then
+      start="${hunk%%,*}"
+      count="${hunk#*,}"
+    else
+      start="$hunk"
+      count=1
+    fi
 
     [[ "$count" -eq 0 || -z "$current_file" ]] && continue
 

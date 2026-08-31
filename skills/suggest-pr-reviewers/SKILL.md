@@ -1,6 +1,12 @@
 ---
 name: suggest-pr-reviewers
-description: Find relevant PR reviewers based on code ownership and recency of contributions. Use when creating PRs or needing to identify who should review code changes.
+description: >-
+  Ranks candidate reviewers for a change by who actually wrote the lines it
+  touches, combining code ownership with recency from chunk-level git blame. Use
+  whenever a reviewer has to be chosen: "who should review this", "who knows this
+  code best", "who has the most context on these files", "find me a reviewer",
+  "add reviewers", "who should I request review from", or when opening a pull
+  request and deciding whom to assign.
 ---
 
 # Suggest PR Reviewers
@@ -19,17 +25,18 @@ reviewers [-n limit] [branch] [base]
 
 ## Quick Start
 
-### Current branch vs main (top 10)
+Resolve [scripts/reviewers.sh][1] to an absolute path once and run it from the
+repository under review. In Claude Code:
+`SCRIPT="${CLAUDE_SKILL_DIR}/scripts/reviewers.sh"`. A skill directory installed
+globally is not reachable by a relative path from the repository you are in.
 
 ```bash
-.agents/skills/suggest-pr-reviewers/scripts/reviewers.sh
+"$SCRIPT"                               # current branch vs main, top 10
+"$SCRIPT" -n 5 feature-branch main      # pick branches and limit
 ```
 
-### Specify branches and limit
-
-```bash
-.agents/skills/suggest-pr-reviewers/scripts/reviewers.sh -n 5 feature-branch main
-```
+The script resolves the repository root itself, so any directory inside the
+target repository works.
 
 ## Metrics Explained
 
@@ -38,7 +45,7 @@ Uses **chunk-level git blame** to identify who wrote the specific lines being mo
 | Metric      | Description                                         | Formula                                 |
 | ----------- | --------------------------------------------------- | --------------------------------------- |
 | **Score**   | Combined score (60% ownership, 40% recency)         | `ownership × 0.6 + recency × 0.4`       |
-| **Own**     | Log-scaled authorship with expert decay, capped     | `min(100, log(lines) × decay)`          |
+| **Own**     | Log-scaled authorship with expert decay, capped     | `min(100, 100 × log(lines+1)/log(100) × decay)`          |
 | **Recency** | Score 15-100, higher = more recent                  | `max(15, 100 × e^(-days × 0.693 / 30))` |
 | **Lines**   | Lines of code being modified that this author wrote | Raw count from `git blame`              |
 | **Files**   | Number of changed files this author touched         | Unique file count                       |
@@ -61,7 +68,7 @@ When this skill is invoked:
 2. **Run the reviewers script**
 
    ```bash
-   .claude/skills/suggest-pr-reviewers/scripts/reviewers.sh [branch] [base]
+   "$SCRIPT" [-n limit] [branch] [base]
    ```
 
 3. **Present results**
@@ -132,3 +139,5 @@ The 60/40 weighting slightly favors code owners over recent-but-minor contributo
 - Ownership capped at 100; recency floored at 15 to keep historical experts visible
 - Current user (from `git config user.name`) should typically be excluded from recommendations
 - Works best with repositories that have >3 months of history
+
+[1]: scripts/reviewers.sh
