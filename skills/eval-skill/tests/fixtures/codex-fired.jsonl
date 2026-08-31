@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"thread-test"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item-test","type":"command_execution","command":"sed -n '1,200p' __SKILL_PATH__","aggregated_output":"","exit_code":0,"status":"completed"}}
+{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}

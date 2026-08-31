@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"model":"claude-test-resolved","content":[{"type":"text","text":"done"}]}}
+{"type":"result","subtype":"success","is_error":false}

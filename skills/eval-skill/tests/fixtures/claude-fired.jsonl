@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"model":"claude-test-resolved","content":[{"type":"tool_use","name":"Skill","input":{"skill":"example-skill"}}]}}
+{"type":"result","subtype":"success","is_error":false}

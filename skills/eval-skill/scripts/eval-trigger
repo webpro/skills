@@ -1,0 +1,1146 @@
+#!/usr/bin/env python3
+"""Measure whether an installed skill fires on a source-controlled prompt set."""
+
+import argparse
+import atexit
+import getpass
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path, PureWindowsPath
+from typing import Any, Optional
+
+
+READ_ONLY_TOOLS = "Read,Glob,Grep,Skill"
+REPORT_SCHEMA_VERSION = 3
+CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
+PREFLIGHT_PROMPT = (
+    "Report the skills available to this session, then reply with exactly: ok"
+)
+
+
+class EvalError(Exception):
+    pass
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_text(text: str) -> str:
+    return sha256_bytes(text.encode())
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def as_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return str(value)
+
+
+def parse_skill_name(text: str, path: Path) -> str:
+    match = re.search(r"^name:\s*(.+?)\s*$", text, re.MULTILINE)
+    if not match:
+        raise EvalError(f"missing skill name in {path}")
+    return match.group(1).strip()
+
+
+def normalize_skill_file(path: Path) -> Path:
+    candidate = path.expanduser()
+    if candidate.is_dir():
+        candidate /= "SKILL.md"
+    if not candidate.is_file():
+        raise EvalError(f"installed skill file not found: {candidate}")
+    return candidate.absolute()
+
+
+def parse_jsonl(stdout: str) -> list[dict]:
+    events = []
+    for line_number, line in enumerate(stdout.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise EvalError(f"invalid JSONL at line {line_number}: {error.msg}") from error
+        if not isinstance(event, dict):
+            raise EvalError(f"invalid JSONL event at line {line_number}: expected object")
+        events.append(event)
+    if not events:
+        raise EvalError("agent returned an empty event stream")
+    return events
+
+
+def catalog_names(value: Any) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    names = set()
+    for item in value:
+        if isinstance(item, str):
+            names.add(item.split(":")[-1])
+        elif isinstance(item, dict) and isinstance(item.get("name"), str):
+            names.add(item["name"].split(":")[-1])
+    return names
+
+
+@dataclass
+class ParsedStream:
+    fired: bool
+    terminal: bool
+    activity: bool
+    observed_model: Optional[str] = None
+    advertised: Optional[set[str]] = None
+    advertised_tools: set[str] = field(default_factory=set)
+    error: Optional[str] = None
+
+
+@dataclass
+class RunOutcome:
+    phase: str
+    status: str
+    returncode: Optional[int]
+    duration_seconds: float
+    stdout: str = ""
+    stderr: str = ""
+    error: Optional[str] = None
+    observed_model: Optional[str] = None
+    advertised: Optional[set[str]] = None
+    advertised_tools: set[str] = field(default_factory=set)
+    case_index: Optional[int] = None
+    run_index: Optional[int] = None
+    trace: Optional[dict] = None
+
+    def public(self) -> dict:
+        result = {
+            "status": self.status,
+            "returncode": self.returncode,
+            "duration_seconds": round(self.duration_seconds, 6),
+        }
+        if self.error:
+            result["error"] = self.error
+        if self.observed_model:
+            result["observed_model"] = self.observed_model
+        if self.advertised is not None:
+            result["advertised_skills"] = sorted(self.advertised)
+        if self.advertised_tools:
+            result["advertised_tools"] = sorted(self.advertised_tools)
+        if self.case_index is not None:
+            result["case_index"] = self.case_index
+        if self.run_index is not None:
+            result["run_index"] = self.run_index
+        if self.trace:
+            result["trace"] = self.trace
+        return result
+
+
+def read_keychain_credentials() -> Optional[str]:
+    """Return the Claude credential blob from the macOS login keychain."""
+    try:
+        result = subprocess.run(
+            [
+                "security",
+                "find-generic-password",
+                "-s",
+                CLAUDE_KEYCHAIN_SERVICE,
+                "-a",
+                getpass.getuser(),
+                "-w",
+            ],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def write_private_file(path: Path, text: str) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w") as stream:
+        stream.write(text)
+
+
+def remove_quietly(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+class AgentAdapter:
+    name = ""
+    executable = ""
+    requires_catalog = False
+
+    def __init__(self) -> None:
+        self.runtime_env: dict[str, str] = {}
+        self.runtime_args: list[str] = []
+        self.runtime_skill_files: set[str] = set()
+        self.auth_passthrough = False
+        self.auth_mechanism: Optional[str] = None
+
+    def command(self, prompt: str, workdir: Path, model: str) -> list[str]:
+        raise NotImplementedError
+
+    def parse(self, stdout: str, skill_name: str, skill_files: set[str]) -> ParsedStream:
+        raise NotImplementedError
+
+    def install_roots(self, home: Path) -> list[Path]:
+        raise NotImplementedError
+
+    def environment(self) -> dict[str, str]:
+        env = dict(os.environ)
+        env["NO_COLOR"] = "1"
+        env.update(self.runtime_env)
+        return env
+
+    def configure_runtime(self, root: Path, source_dir: Path, name: str) -> Path:
+        raise NotImplementedError
+
+    def version(self, timeout: float) -> str:
+        try:
+            result = subprocess.run(
+                [self.executable, "--version"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=min(timeout, 10),
+                env=self.environment(),
+            )
+        except FileNotFoundError as error:
+            raise EvalError(f"agent executable not found: {self.executable}") from error
+        except subprocess.TimeoutExpired as error:
+            raise EvalError(f"{self.executable} --version timed out") from error
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            raise EvalError(
+                f"{self.executable} --version exited {result.returncode}"
+                + (f": {detail[:300]}" if detail else "")
+            )
+        version = result.stdout.strip().splitlines()
+        if not version:
+            raise EvalError(f"{self.executable} --version returned no version")
+        return version[0]
+
+
+class ClaudeAdapter(AgentAdapter):
+    name = "claude"
+    executable = "claude"
+    requires_catalog = True
+
+    def command(self, prompt: str, workdir: Path, model: str) -> list[str]:
+        return [
+            self.executable,
+            "-p",
+            prompt,
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--tools",
+            READ_ONLY_TOOLS,
+            "--allowedTools",
+            READ_ONLY_TOOLS,
+            "--strict-mcp-config",
+            "--restricted",
+            "--no-session-persistence",
+            *self.runtime_args,
+            "--model",
+            model,
+        ]
+
+    def install_credentials(self, profile: Path) -> str:
+        """Give the disposable profile the credentials the user already holds.
+
+        A stored credentials file is linked, never copied. macOS keeps the blob
+        in the login keychain, which an isolated `HOME` cannot reach because the
+        keychain itself lives under `$HOME/Library`, so it is written 0600 into
+        the profile and removed when the process exits.
+        """
+        target = profile / ".credentials.json"
+        stored = Path.home() / ".claude" / ".credentials.json"
+        if stored.is_file():
+            target.symlink_to(stored)
+            return "credentials_file"
+        blob = read_keychain_credentials() if sys.platform == "darwin" else None
+        if blob:
+            write_private_file(target, blob + "\n")
+            atexit.register(remove_quietly, target)
+            return "macos_keychain"
+        detail = f"no credentials file at {stored}"
+        if sys.platform == "darwin":
+            detail += (
+                f" and no keychain item '{CLAUDE_KEYCHAIN_SERVICE}'"
+                f" for account '{getpass.getuser()}'"
+            )
+        raise EvalError(f"--auth-passthrough found no Claude credentials: {detail}")
+
+    def configure_runtime(self, root: Path, source_dir: Path, name: str) -> Path:
+        runtime_home = root / "home"
+        profile = runtime_home / ".claude"
+        profile.mkdir(parents=True)
+        if self.auth_passthrough:
+            self.auth_mechanism = self.install_credentials(profile)
+        plugin = root / "plugin"
+        manifest = plugin / ".claude-plugin" / "plugin.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(
+            json.dumps(
+                {
+                    "name": "eval-target",
+                    "version": "0.0.0",
+                    "description": "Isolated skill evaluation target.",
+                }
+            )
+            + "\n"
+        )
+        skill = plugin / "skills" / name
+        skill.parent.mkdir(parents=True)
+        skill.symlink_to(source_dir, target_is_directory=True)
+        self.runtime_env = {
+            "HOME": str(runtime_home),
+            "CLAUDE_CONFIG_DIR": str(profile),
+        }
+        self.runtime_args = ["--plugin-dir", str(plugin)]
+        self.runtime_skill_files = {str(skill / "SKILL.md")}
+        return skill / "SKILL.md"
+
+    def install_roots(self, home: Path) -> list[Path]:
+        return [home / ".claude" / "skills", home / ".agents" / "skills"]
+
+    def environment(self) -> dict[str, str]:
+        env = super().environment()
+        env.pop("CLAUDECODE", None)
+        return env
+
+    def parse(self, stdout: str, skill_name: str, skill_files: set[str]) -> ParsedStream:
+        events = parse_jsonl(stdout)
+        fired = False
+        terminal = False
+        advertised = None
+        advertised_tools = set()
+        observed_model = None
+        stream_error = None
+        activity = False
+
+        for event in events:
+            if "skills" in event or "available_skills" in event:
+                value = event.get("skills", event.get("available_skills"))
+                advertised = catalog_names(value)
+            advertised_tools.update(catalog_names(event.get("tools")))
+            if isinstance(event.get("model"), str):
+                observed_model = event["model"]
+            message = event.get("message")
+            if isinstance(message, dict) and isinstance(message.get("model"), str):
+                observed_model = message["model"]
+
+            if event.get("type") == "assistant" and isinstance(message, dict):
+                activity = True
+                for block in message.get("content", []):
+                    if not isinstance(block, dict) or block.get("type") != "tool_use":
+                        continue
+                    payload = block.get("input") or {}
+                    if block.get("name") == "Skill":
+                        invoked = payload.get("skill", "")
+                        if invoked == skill_name or invoked.endswith(f":{skill_name}"):
+                            fired = True
+            if event.get("type") == "result":
+                terminal = True
+                if event.get("is_error"):
+                    stream_error = as_text(event.get("result") or "agent result reported an error")
+
+        return ParsedStream(
+            fired=fired,
+            terminal=terminal,
+            activity=activity,
+            observed_model=observed_model,
+            advertised=advertised,
+            advertised_tools=advertised_tools,
+            error=stream_error,
+        )
+
+
+class CodexAdapter(AgentAdapter):
+    name = "codex"
+    executable = "codex"
+
+    def command(self, prompt: str, workdir: Path, model: str) -> list[str]:
+        return [
+            self.executable,
+            "exec",
+            "--json",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check",
+            "-C",
+            str(workdir),
+            "--model",
+            model,
+            prompt,
+        ]
+
+    def configure_runtime(self, root: Path, source_dir: Path, name: str) -> Path:
+        runtime_home = root / "home"
+        profile = runtime_home / ".codex"
+        skill = profile / "skills" / name
+        skill.parent.mkdir(parents=True)
+        skill.symlink_to(source_dir, target_is_directory=True)
+        alias_skill = profile / "skills" / "r0" / name
+        alias_skill.parent.mkdir(parents=True)
+        alias_skill.symlink_to(source_dir, target_is_directory=True)
+        source_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
+        source_auth = source_home / "auth.json"
+        if source_auth.is_file():
+            (profile / "auth.json").symlink_to(source_auth)
+            self.auth_mechanism = "auth_file"
+        self.runtime_env = {
+            "HOME": str(runtime_home),
+            "CODEX_HOME": str(profile),
+        }
+        self.runtime_skill_files = {
+            str(skill / "SKILL.md"),
+            str(alias_skill / "SKILL.md"),
+        }
+        return skill / "SKILL.md"
+
+    def install_roots(self, home: Path) -> list[Path]:
+        codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex")).expanduser()
+        return [codex_home / "skills", home / ".codex" / "skills", home / ".agents" / "skills"]
+
+    def parse(self, stdout: str, skill_name: str, skill_files: set[str]) -> ParsedStream:
+        events = parse_jsonl(stdout)
+        fired = False
+        terminal = False
+        observed_model = None
+        stream_error = None
+        activity = False
+
+        for event in events:
+            event_type = event.get("type")
+            if isinstance(event.get("model"), str):
+                observed_model = event["model"]
+            if event_type == "turn.completed":
+                terminal = True
+            if event_type in {"turn.failed", "error"}:
+                stream_error = as_text(event.get("error") or event.get("message") or event_type)
+
+            item = event.get("item")
+            if not isinstance(item, dict):
+                continue
+            activity = True
+            item_type = item.get("type")
+            if item_type in {"skill", "skill_use"}:
+                invoked = item.get("name") or item.get("skill") or ""
+                if invoked == skill_name or as_text(invoked).endswith(f":{skill_name}"):
+                    fired = True
+            tool_input = ""
+            if item_type == "command_execution":
+                tool_input = as_text(item.get("command"))
+            elif item_type in {"function_call", "tool_call"}:
+                tool_input = json.dumps(
+                    item.get("arguments") or item.get("input") or {},
+                    sort_keys=True,
+                )
+            if tool_input and any(path in tool_input for path in skill_files):
+                fired = True
+
+        return ParsedStream(
+            fired=fired,
+            terminal=terminal,
+            activity=activity,
+            observed_model=observed_model,
+            error=stream_error,
+        )
+
+
+ADAPTERS = {"claude": ClaudeAdapter, "codex": CodexAdapter}
+
+
+def resolve_installed_skill(
+    adapter: AgentAdapter,
+    name: str,
+    source_hash: str,
+    explicit: Optional[Path],
+) -> tuple[list[str], str, set[str]]:
+    home = Path.home()
+    candidates = []
+    seen_locations = set()
+    locations = []
+    if explicit:
+        locations.append(normalize_skill_file(explicit))
+    locations.extend(
+        (root / name / "SKILL.md").expanduser().absolute()
+        for root in adapter.install_roots(home)
+    )
+    for location in locations:
+        if not location.is_file():
+            continue
+        canonical = location.resolve()
+        if canonical in seen_locations:
+            continue
+        seen_locations.add(canonical)
+        candidates.append(location)
+
+    if not candidates:
+        raise EvalError(
+            f"'{name}' has no installed source for {adapter.name}; "
+            "install it or pass --installed-skill"
+        )
+
+    candidate_hashes = []
+    accepted_paths = set()
+    for candidate in candidates:
+        text = candidate.read_text()
+        installed_name = parse_skill_name(text, candidate)
+        if installed_name != name:
+            raise EvalError(
+                f"installed skill name '{installed_name}' does not match "
+                f"source name '{name}': {candidate}"
+            )
+        digest = sha256_bytes(candidate.read_bytes())
+        candidate_hashes.append((candidate, digest))
+        accepted_paths.add(str(candidate))
+        accepted_paths.add(str(candidate.resolve()))
+
+    distinct_hashes = {digest for _, digest in candidate_hashes}
+    if len(distinct_hashes) > 1:
+        locations = ", ".join(str(path) for path, _ in candidate_hashes)
+        raise EvalError(f"conflicting installed copies of '{name}': {locations}")
+    installed_hash = next(iter(distinct_hashes))
+    if installed_hash != source_hash:
+        locations = ", ".join(str(path) for path, _ in candidate_hashes)
+        raise EvalError(f"installed skill does not match source '{name}': {locations}")
+
+    installed_paths = [str(path) for path, _ in candidate_hashes]
+    return installed_paths, installed_hash, accepted_paths
+
+
+def validate_fixture_path(filename: str) -> None:
+    path = Path(filename)
+    if (
+        not filename
+        or path.is_absolute()
+        or PureWindowsPath(filename).is_absolute()
+        or ".." in path.parts
+        or ".." in PureWindowsPath(filename).parts
+    ):
+        raise EvalError(f"fixture file escapes the fixture workspace: {filename!r}")
+
+
+def load_cases(corpus_path: Path) -> tuple[list[dict], str]:
+    try:
+        raw = corpus_path.read_bytes()
+        cases = json.loads(raw)
+    except FileNotFoundError as error:
+        raise EvalError(f"eval corpus not found: {corpus_path}") from error
+    except json.JSONDecodeError as error:
+        raise EvalError(f"invalid eval corpus JSON: {error}") from error
+    if not isinstance(cases, list) or not cases:
+        raise EvalError("eval corpus must be a non-empty JSON array")
+
+    for index, case in enumerate(cases, 1):
+        if not isinstance(case, dict):
+            raise EvalError(f"case {index} must be an object")
+        if not isinstance(case.get("query"), str) or not case["query"].strip():
+            raise EvalError(f"case {index} must have a non-empty query")
+        if not isinstance(case.get("should_trigger"), bool):
+            raise EvalError(f"case {index} must have a boolean should_trigger")
+        files = case.get("files") or {}
+        if not isinstance(files, dict):
+            raise EvalError(f"case {index} files must be an object")
+        for filename, content in files.items():
+            if not isinstance(filename, str) or not isinstance(content, str):
+                raise EvalError(f"case {index} files must map strings to strings")
+            validate_fixture_path(filename)
+        if "setup" in case and not isinstance(case["setup"], str):
+            raise EvalError(f"case {index} setup must be a string")
+    return cases, sha256_bytes(raw)
+
+
+def invoke_agent(
+    adapter: AgentAdapter,
+    prompt: str,
+    workdir: Path,
+    model: str,
+    timeout: float,
+    skill_name: str,
+    skill_files: set[str],
+    phase: str,
+    case_index: Optional[int] = None,
+    run_index: Optional[int] = None,
+) -> RunOutcome:
+    command = adapter.command(prompt, workdir, model)
+    started = time.monotonic()
+    try:
+        result = subprocess.run(
+            command,
+            cwd=workdir,
+            env=adapter.environment(),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        duration = time.monotonic() - started
+        error = f"agent executable not found: {adapter.executable}"
+        return RunOutcome(phase, "error", None, duration, error=error,
+                          case_index=case_index, run_index=run_index)
+    except subprocess.TimeoutExpired as timeout_error:
+        duration = time.monotonic() - started
+        error = f"agent timed out after {timeout:g}s"
+        return RunOutcome(
+            phase,
+            "error",
+            None,
+            duration,
+            stdout=as_text(timeout_error.stdout),
+            stderr=as_text(timeout_error.stderr),
+            error=error,
+            case_index=case_index,
+            run_index=run_index,
+        )
+
+    duration = time.monotonic() - started
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        error = f"agent exited {result.returncode}" + (f": {detail[:300]}" if detail else "")
+        return RunOutcome(
+            phase,
+            "error",
+            result.returncode,
+            duration,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=error,
+            case_index=case_index,
+            run_index=run_index,
+        )
+
+    try:
+        parsed = adapter.parse(result.stdout, skill_name, skill_files)
+    except EvalError as error:
+        return RunOutcome(
+            phase,
+            "error",
+            result.returncode,
+            duration,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=str(error),
+            case_index=case_index,
+            run_index=run_index,
+        )
+    if parsed.error:
+        return RunOutcome(
+            phase,
+            "error",
+            result.returncode,
+            duration,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=f"agent event stream reported an error: {parsed.error[:300]}",
+            observed_model=parsed.observed_model,
+            advertised=parsed.advertised,
+            advertised_tools=parsed.advertised_tools,
+            case_index=case_index,
+            run_index=run_index,
+        )
+    if not parsed.terminal:
+        return RunOutcome(
+            phase,
+            "error",
+            result.returncode,
+            duration,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error="agent event stream had no terminal event",
+            observed_model=parsed.observed_model,
+            advertised=parsed.advertised,
+            advertised_tools=parsed.advertised_tools,
+            case_index=case_index,
+            run_index=run_index,
+        )
+    if not parsed.activity:
+        return RunOutcome(
+            phase,
+            "error",
+            result.returncode,
+            duration,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error="agent event stream had no response activity",
+            observed_model=parsed.observed_model,
+            advertised=parsed.advertised,
+            advertised_tools=parsed.advertised_tools,
+            case_index=case_index,
+            run_index=run_index,
+        )
+    return RunOutcome(
+        phase,
+        "fired" if parsed.fired else "not_fired",
+        result.returncode,
+        duration,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        observed_model=parsed.observed_model,
+        advertised=parsed.advertised,
+        advertised_tools=parsed.advertised_tools,
+        case_index=case_index,
+        run_index=run_index,
+    )
+
+
+def run_case(
+    adapter: AgentAdapter,
+    case: dict,
+    case_index: int,
+    run_index: int,
+    model: str,
+    timeout: float,
+    skill_name: str,
+    skill_files: set[str],
+    allow_setup: bool,
+) -> RunOutcome:
+    with tempfile.TemporaryDirectory(prefix="eval-trigger-") as directory:
+        workdir = Path(directory).resolve()
+        try:
+            for filename, content in (case.get("files") or {}).items():
+                target = (workdir / filename).resolve()
+                if workdir != target and workdir not in target.parents:
+                    raise EvalError(f"fixture file escapes the fixture workspace: {filename!r}")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content)
+        except (EvalError, OSError) as error:
+            return RunOutcome(
+                "case",
+                "error",
+                None,
+                0,
+                error=str(error),
+                case_index=case_index,
+                run_index=run_index,
+            )
+
+        if case.get("setup"):
+            if not allow_setup:
+                return RunOutcome(
+                    "case",
+                    "error",
+                    None,
+                    0,
+                    error="fixture setup was not authorized",
+                    case_index=case_index,
+                    run_index=run_index,
+                )
+            hermetic = {
+                **os.environ,
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "GIT_TERMINAL_PROMPT": "0",
+            }
+            setup_started = time.monotonic()
+            try:
+                setup = subprocess.run(
+                    case["setup"],
+                    shell=True,
+                    cwd=workdir,
+                    env=hermetic,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=min(timeout, 60),
+                )
+            except subprocess.TimeoutExpired as error:
+                return RunOutcome(
+                    "case",
+                    "error",
+                    None,
+                    time.monotonic() - setup_started,
+                    stdout=as_text(error.stdout),
+                    stderr=as_text(error.stderr),
+                    error="fixture setup timed out",
+                    case_index=case_index,
+                    run_index=run_index,
+                )
+            if setup.returncode != 0:
+                detail = setup.stderr.strip() or setup.stdout.strip()
+                error = f"fixture setup exited {setup.returncode}"
+                if detail:
+                    error += f": {detail[:300]}"
+                return RunOutcome(
+                    "case",
+                    "error",
+                    setup.returncode,
+                    time.monotonic() - setup_started,
+                    stdout=setup.stdout,
+                    stderr=setup.stderr,
+                    error=error,
+                    case_index=case_index,
+                    run_index=run_index,
+                )
+
+        return invoke_agent(
+            adapter,
+            case["query"],
+            workdir,
+            model,
+            timeout,
+            skill_name,
+            skill_files,
+            "case",
+            case_index,
+            run_index,
+        )
+
+
+def save_traces(report_path: Path, outcomes: list[RunOutcome]) -> None:
+    trace_dir = report_path.parent / f"{report_path.stem}-traces"
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    for outcome in outcomes:
+        if outcome.phase == "case":
+            key = f"case-{outcome.case_index:03d}-run-{outcome.run_index:03d}"
+        else:
+            key = outcome.phase.replace("_", "-")
+        stdout_path = (trace_dir / f"{key}.stdout.jsonl").resolve()
+        stderr_path = (trace_dir / f"{key}.stderr").resolve()
+        stdout_path.write_text(outcome.stdout)
+        stderr_path.write_text(outcome.stderr)
+        outcome.trace = {
+            "stdout_path": str(stdout_path),
+            "stdout_sha256": sha256_text(outcome.stdout),
+            "stderr_path": str(stderr_path),
+            "stderr_sha256": sha256_text(outcome.stderr),
+        }
+
+
+def build_case_results(
+    cases: list[dict], outcomes: list[RunOutcome], runs: int
+) -> tuple[list[dict], dict]:
+    by_case: dict[int, list[RunOutcome]] = {index: [] for index in range(1, len(cases) + 1)}
+    for outcome in outcomes:
+        if outcome.case_index is not None:
+            by_case[outcome.case_index].append(outcome)
+
+    results = []
+    passed = 0
+    for index, case in enumerate(cases, 1):
+        window = sorted(by_case[index], key=lambda item: item.run_index or 0)
+        if len(window) != runs or any(item.status == "error" for item in window):
+            continue
+        hits = sum(item.status == "fired" for item in window)
+        rate = hits / runs
+        ok = rate == 1.0 if case["should_trigger"] else rate == 0.0
+        passed += ok
+        results.append(
+            {
+                "query": case["query"],
+                "should_trigger": case["should_trigger"],
+                "trigger_rate": rate,
+                "triggers": hits,
+                "runs": runs,
+                "pass": ok,
+                "outcomes": [item.public() for item in window],
+            }
+        )
+    summary = {"total": len(cases), "passed": passed, "failed": len(cases) - passed}
+    return results, summary
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("skill_path", type=Path)
+    parser.add_argument("--agent", choices=sorted(ADAPTERS), default="claude")
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument("--workers", type=int, default=6)
+    parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument("--json", type=Path)
+    parser.add_argument("--installed-skill", type=Path)
+    parser.add_argument("--allow-setup", action="store_true")
+    parser.add_argument(
+        "--auth-passthrough",
+        action="store_true",
+        help=(
+            "let the isolated Claude profile use your existing credentials. "
+            "Links ~/.claude/.credentials.json when it exists; on macOS reads "
+            "the login keychain and writes the blob 0600 into the disposable "
+            "profile, removing it on exit. Codex already passes its auth.json "
+            "through and ignores this flag."
+        ),
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    started_at = utc_now()
+    started = time.monotonic()
+    report: dict[str, Any] = {
+        "schema_version": REPORT_SCHEMA_VERSION,
+        "status": "error",
+        "started_at": started_at,
+        "runner": {
+            "path": str(Path(__file__).resolve()),
+            "sha256": sha256_bytes(Path(__file__).resolve().read_bytes()),
+        },
+        "agent": {
+            "name": args.agent,
+            "requested_model": args.model,
+            "observed_models": [],
+        },
+    }
+    all_outcomes: list[RunOutcome] = []
+    preflight: Optional[RunOutcome] = None
+    positive_control: Optional[RunOutcome] = None
+    case_outcomes: list[RunOutcome] = []
+    cases: list[dict] = []
+    exit_code = 2
+    runtime_profile: Optional[tempfile.TemporaryDirectory] = None
+
+    try:
+        if args.runs < 1:
+            raise EvalError("--runs must be at least 1")
+        if args.workers < 1:
+            raise EvalError("--workers must be at least 1")
+        if args.timeout <= 0:
+            raise EvalError("--timeout must be greater than 0")
+
+        source_dir = args.skill_path.expanduser().resolve()
+        source_file = source_dir / "SKILL.md"
+        if not source_file.is_file():
+            raise EvalError(f"skill file not found: {source_file}")
+        source_text = source_file.read_text()
+        name = parse_skill_name(source_text, source_file)
+        source_hash = sha256_bytes(source_file.read_bytes())
+        corpus_path = source_dir / "evals" / "trigger.json"
+        cases, corpus_hash = load_cases(corpus_path)
+        report["skill"] = {
+            "name": name,
+            "source_path": str(source_file),
+            "source_sha256": source_hash,
+        }
+        report["eval"] = {
+            "corpus_path": str(corpus_path),
+            "corpus_sha256": corpus_hash,
+            "cases": len(cases),
+            "runs_per_query": args.runs,
+            "setup_authorized": args.allow_setup,
+        }
+
+        setup_cases = [
+            f"{index}: {case['query'][:80]}"
+            for index, case in enumerate(cases, 1)
+            if case.get("setup")
+        ]
+        if setup_cases and not args.allow_setup:
+            joined = "; ".join(setup_cases)
+            raise EvalError(f"fixture setup requires --allow-setup for cases: {joined}")
+
+        adapter = ADAPTERS[args.agent]()
+        adapter.auth_passthrough = args.auth_passthrough
+        installed_paths, installed_hash, skill_files = resolve_installed_skill(
+            adapter, name, source_hash, args.installed_skill
+        )
+        runtime_profile = tempfile.TemporaryDirectory(prefix="eval-agent-profile-")
+        runtime_skill = adapter.configure_runtime(
+            Path(runtime_profile.name).resolve(), source_dir, name
+        )
+        skill_files.update(adapter.runtime_skill_files)
+        skill_files.update({str(runtime_skill), str(runtime_skill.resolve())})
+        report["skill"].update(
+            {
+                "installed_paths": installed_paths,
+                "installed_sha256": installed_hash,
+            }
+        )
+        report["eval"]["policy_context"] = {
+            "user_instructions": "isolated",
+            "project_instructions": "fixture_only",
+        }
+        report["agent"]["auth"] = {
+            "passthrough_requested": args.auth_passthrough,
+            "mechanism": adapter.auth_mechanism,
+        }
+        report["agent"]["cli_version"] = adapter.version(args.timeout)
+        if isinstance(adapter, ClaudeAdapter):
+            report["agent"]["tool_policy"] = {
+                "tools": READ_ONLY_TOOLS.split(","),
+                "allowed_tools": READ_ONLY_TOOLS.split(","),
+                "strict_mcp_config": True,
+                "restricted": True,
+                "isolated_home": True,
+                "target_plugin_only": True,
+            }
+        else:
+            report["agent"]["tool_policy"] = {
+                "sandbox": "read-only",
+                "ephemeral": True,
+            }
+
+        if adapter.requires_catalog:
+            with tempfile.TemporaryDirectory(prefix="eval-preflight-") as directory:
+                preflight = invoke_agent(
+                    adapter,
+                    PREFLIGHT_PROMPT,
+                    Path(directory).resolve(),
+                    args.model,
+                    args.timeout,
+                    name,
+                    skill_files,
+                    "preflight",
+                )
+            all_outcomes.append(preflight)
+            if preflight.status == "error":
+                raise EvalError(f"preflight failed: {preflight.error}")
+            if not preflight.advertised:
+                raise EvalError("advertised skill catalog was empty")
+            if name not in preflight.advertised:
+                raise EvalError(f"'{name}' is not in the advertised skill catalog")
+
+        control_prompt = (
+            f"Positive control: use the {name} skill, then reply with exactly: skill loaded."
+        )
+        with tempfile.TemporaryDirectory(prefix="eval-control-") as directory:
+            positive_control = invoke_agent(
+                adapter,
+                control_prompt,
+                Path(directory).resolve(),
+                args.model,
+                args.timeout,
+                name,
+                skill_files,
+                "positive_control",
+            )
+        all_outcomes.append(positive_control)
+        if positive_control.status == "error":
+            raise EvalError(f"positive control failed: {positive_control.error}")
+        if positive_control.status != "fired":
+            raise EvalError("positive control did not fire")
+
+        jobs = [
+            (case, case_index, run_index)
+            for case_index, case in enumerate(cases, 1)
+            for run_index in range(1, args.runs + 1)
+        ]
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futures = {
+                pool.submit(
+                    run_case,
+                    adapter,
+                    case,
+                    case_index,
+                    run_index,
+                    args.model,
+                    args.timeout,
+                    name,
+                    skill_files,
+                    args.allow_setup,
+                ): (case_index, run_index)
+                for case, case_index, run_index in jobs
+            }
+            infrastructure_error = None
+            for future in as_completed(futures):
+                case_index, run_index = futures[future]
+                if future.cancelled():
+                    continue
+                try:
+                    outcome = future.result()
+                except Exception as error:
+                    outcome = RunOutcome(
+                        "case",
+                        "error",
+                        None,
+                        0,
+                        error=f"runner error: {error}",
+                        case_index=case_index,
+                        run_index=run_index,
+                    )
+                case_outcomes.append(outcome)
+                all_outcomes.append(outcome)
+                if outcome.status == "error" and infrastructure_error is None:
+                    infrastructure_error = outcome
+                    for pending in futures:
+                        pending.cancel()
+        case_outcomes.sort(key=lambda item: (item.case_index or 0, item.run_index or 0))
+        if infrastructure_error:
+            raise EvalError(
+                f"case {infrastructure_error.case_index} run {infrastructure_error.run_index}: "
+                f"{infrastructure_error.error}"
+            )
+
+        results, summary = build_case_results(cases, case_outcomes, args.runs)
+        report["results"] = results
+        report["summary"] = summary
+        report["status"] = "pass" if summary["failed"] == 0 else "fail"
+        exit_code = 0 if summary["failed"] == 0 else 1
+        for result in results:
+            label = "PASS" if result["pass"] else "FAIL"
+            print(
+                f"  [{label}] {result['triggers']}/{result['runs']} "
+                f"expected={result['should_trigger']}: {result['query'][:68]}",
+                file=sys.stderr,
+            )
+        print(
+            f"\n{name} [{args.agent}/{args.model}]: {summary['passed']}/{summary['total']} passed",
+            file=sys.stderr,
+        )
+    except EvalError as error:
+        report["status"] = "error"
+        report["error"] = str(error)
+        print(f"error: {error}", file=sys.stderr)
+        exit_code = 2
+
+    if args.json:
+        args.json.parent.mkdir(parents=True, exist_ok=True)
+        save_traces(args.json, all_outcomes)
+        if case_outcomes and "results" in report:
+            report["results"], report["summary"] = build_case_results(
+                cases, case_outcomes, args.runs
+            )
+
+    observed_models = sorted(
+        {outcome.observed_model for outcome in all_outcomes if outcome.observed_model}
+    )
+    report["agent"]["observed_models"] = observed_models
+    if preflight:
+        report["preflight"] = preflight.public()
+    elif args.agent == "codex":
+        report["preflight"] = {"status": "source_identity_only"}
+    if positive_control:
+        report["positive_control"] = positive_control.public()
+    if case_outcomes and "results" not in report:
+        report["case_outcomes"] = [outcome.public() for outcome in case_outcomes]
+    report["duration_seconds"] = round(time.monotonic() - started, 6)
+
+    output = json.dumps(report, indent=2) + "\n"
+    if args.json:
+        args.json.write_text(output)
+    else:
+        print(output, end="")
+    if runtime_profile:
+        runtime_profile.cleanup()
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
