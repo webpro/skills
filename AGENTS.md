@@ -10,7 +10,7 @@
 
 ## Planning
 
-- Read `.agents/lessons.md` before starting.
+- Read `.agents/lessons.md` before starting. If it is an index, load only the `.agents/lessons/*.md` files whose "load when" matches the task.
 - Skip formal planning for quick, trivial tasks.
 
 For non-trivial tasks:
@@ -19,7 +19,7 @@ For non-trivial tasks:
 2. Get alignment: check in before implementation when scope, approach, or tradeoffs are unclear.
 3. Track progress and explain changes: mark items complete as you go and provide a high-level summary at meaningful milestones.
 4. Document results: add a review section to `.agents/tasks/todo-(name).md`.
-5. Capture lessons: update `.agents/lessons.md` after corrections.
+5. Capture lessons: after a correction, update `.agents/lessons.md` or the matching indexed lesson; add an index row only for a genuinely new topic.
 
 - You are authorized to use subagents liberally, especially to offload research, exploration, and parallel analysis while keeping the main context window clean.
 
@@ -75,6 +75,7 @@ For non-trivial tasks:
 - Prefer dedicated Read/Grep/Glob tools over shell for inspection; diagnose unexpected command failures instead of silently working around them.
 - For file discovery, use git-aware tools that honor ignores: `rg --files`, `rg`, `git ls-files`, or a bounded `fd` with explicit excludes.
 - When passing search patterns or inline scripts through the shell, remember double quotes still expand backticks, `$()`, and `$var`. Use single quotes for literal patterns, or avoid template literals/backticks in `node -e` snippets.
+- Bundle short CLI flags only when none takes a value; for example, `rg -rn pattern` means `rg --replace n pattern`, not recursive search with line numbers.
 - A pipeline exits with its last command's status, so piping a check into `tail`/`rg` masks its failure. Capture to a file, check `$?`, then filter the file.
 - Destructive operations, global installs, and user- or machine-level configuration changes require explicit authorization.
 - macOS shells may use /bin/bash 3.2 and BSD utilities. Before relying on GNU-specific behavior, check command -v and the version (last resort: g-prefixed tool if available). Try both implementations before switching to another means.
