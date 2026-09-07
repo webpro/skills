@@ -25,7 +25,7 @@ Use draft when the request requires new copy, revise when it asks to change exis
 
 1. Source fidelity: Verify names, links, quantities, attribution, causal claims, consequences, and requested constraints. Preserve code blocks, commands, file paths, identifiers, quoted error text, numbers, and links exactly unless the user requests a change or a verified source requires correction. Distinguish sourced facts, author-provided claims, and inference. Never invent benefits, implementation details, validation, or follow-up work to make the copy sound complete. In a draft, use supported claims and calibrate their certainty to the evidence. In a revision, preserve an author-provided claim when no source contradicts it and report the verification gap outside the copy. When a source contradicts a draft or revision, correct the copy to the sourced fact and report the change outside the copy; never swap wording silently. In an audit, report contradictions and verification gaps without changing the copy.
 2. Active policy: Apply any available user or project instructions, especially their communication, public-copy, draft-file, and external-action rules. When present, those instructions own house style; do not replace them with this skill's preferences.
-3. Reader value: Lead with the result, behavior, or concern. Keep the detail a future reader needs and remove agent process, local workflow, and ceremonial reporting unless the artifact genuinely calls for it.
+3. Reader value: Lead with the result, behavior, or concern. Keep the detail a future reader needs and remove agent process, local workflow, and ceremonial reporting unless the artifact genuinely calls for it. Describe current behavior in reference docs and code comments. Keep history that explains a constraint or belongs in an artifact about changes.
 4. Naturalness: Edit structure and cadence only after the copy is true and useful.
 
 This order is deliberate. Smooth prose must not hide a factual error or unsupported claim. Complete every applicable pass before delivering; the order controls priority, not when to stop looking.
@@ -47,10 +47,12 @@ Look beyond stock phrases. Modern model output often sounds generated without ma
 
 - generic benefit framing before the concrete point;
 - excessive headings, summary sections, status banners, or emoji badges;
+- opening sentences that merely repeat their headings;
 - repeated conclusions or advisory language after the point is already clear;
 - uniform paragraph or sentence shapes that read like a report template;
 - exaggerated certainty or consequences not supported by the source;
 - suspense, reveal, kicker, or grand-metaphor framing that inflates an ordinary result or concern;
+- unraised objections or alternatives; retain contrasts that explain tradeoffs or correct plausible misunderstandings;
 - speculative next steps added only to create a tidy ending;
 - an entry that is longer or more formal than its neighbors.
 
@@ -76,7 +78,9 @@ Inspect each match in context. A match is a review candidate, not an error, and 
 - [Unslop][1]: fact-preserving rewrites and structural checks for mechanical prose.
 - [LLM cliche highlighter][2]: deterministic candidates for the optional highlighter pass.
 - [NoBuzz's `debuzz` skill][3]: audience-aware editing and checks for theatrical framing.
+- [Humanizer][4]: contextual contrasts, heading repetition, and history in documentation.
 
 [1]: https://github.com/theclaymethod/unslop
 [2]: https://tools.simonwillison.net/llm-cliche-highlighter
 [3]: https://github.com/adnanakil/nobuzz/blob/main/debuzz/SKILL.md
+[4]: https://github.com/blader/humanizer/blob/main/SKILL.md
