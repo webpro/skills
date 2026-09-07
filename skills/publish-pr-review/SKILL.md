@@ -13,14 +13,17 @@ Stop on any of these, say which one, and ask for what would clear it.
 
 1. The user has not explicitly authorized this publish. Authorization covers the verdict and its inline comments and nothing else: no code changes, labels, reviewer requests, or merges.
 2. The head has moved past the revision that was reviewed. Checking the findings against the new commits is reviewing rather than publishing, so hand it back instead of doing it here, even when they look like they survive. Publishing against unreviewed code is worse than publishing late.
-3. Every finding is already on the pull request. Read the existing reviews and threads first, including other people's and ones predating the reviewed revision. Drop the findings those threads already cover, say which you dropped, and stop only when nothing is left to add. This condition covers duplication alone; a moved head is condition 2 and outranks it.
-4. The exact copy and inline locations have not been shown and confirmed. Show them as their own step, before any mutation.
+3. Every finding is already on the pull request. Read the existing reviews, threads, and PR comments first, including other people's and ones predating the reviewed revision. Drop the findings those threads already cover, say which you dropped, and stop only when nothing is left to add. This condition covers duplication alone; a moved head is condition 2 and outranks it.
+4. The exact assembled review body, every inline comment, and every inline location have not been shown and confirmed. Show the copy itself as a separate step before any mutation; a summary or file path is not a substitute.
 
 ## Public copy
 
-Pass the verdict and every finding through the `review-prose` skill when it is available. It owns the wording and whatever house style is active. This skill owns only where each piece goes.
+Pass the review body and every finding through the `review-prose` skill when it is available. It owns the wording and whatever house style is active. This skill owns only where each piece goes.
 
-- Put the verdict and its product-level rationale in the review body.
+- Let the GitHub review event carry the formal verdict. Use the review body for a brief, natural explanation of why that verdict was selected, with enough product context to be useful to the author.
+- Do not use a body that only restates the event, such as `Request changes.`, `Approved.`, `Comment.`, or `LGTM`.
+- Thank the contributor on our first review or comment on a PR, even when requesting changes. On follow-ups, acknowledge revisions; keep appreciation specific and proportionate.
+- Match singular and plural wording to the findings being published.
 - Anchor each actionable finding to the changed line it concerns. Lead with priority, then the observable consequence, then the ownership-level correction.
 - Keep one concern per inline thread.
 - When no changed line can honestly anchor a finding, put it in the body with its file and line rather than anchoring it to an adjacent line.
@@ -42,7 +45,7 @@ gh api --method POST repos/{owner}/{repo}/pulls/NUMBER/reviews --input - <<'JSON
 {
   "commit_id": "PINNED_HEAD_SHA",
   "event": "REQUEST_CHANGES",
-  "body": "Verdict and rationale.",
+  "body": "Thanks for the fix and regression test. Two correctness issues remain; details inline.",
   "comments": [
     { "path": "src/parse.js", "line": 42, "side": "RIGHT", "body": "P1 ..." },
     { "path": "src/parse.js", "start_line": 55, "start_side": "RIGHT", "line": 58, "side": "RIGHT", "body": "P2 ..." }
