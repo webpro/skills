@@ -77,6 +77,15 @@ Identify one target:
 - staged, unstaged, and untracked local work; or
 - named paths, symbols, or lines plus relevant callers and tests.
 
+Choose the review unit before invoking the reviewer. Keep a commit separate when
+its behavior or risk is independently testable, or when attribution matters.
+Group consecutive commits when they change the same subsystem or hot call graph
+and the important question is their final interaction. A whole-session diff is
+often the better performance target after correctness has already been reviewed:
+the reviewer pays repository orientation once and measures the code users will
+run. Treat test-only commits as evidence rather than mandatory standalone
+reviews. Always name the exact immutable range inside the grouped target.
+
 Resolve an omitted base from local repository configuration. For a remote branch
 or pull request, fetch only its target and base refs when they are absent. Do
 not substitute a source archive, create a commit, or modify tracked files solely
@@ -86,6 +95,12 @@ Use one coherent Git checkout with the target materialized and its base object
 available. From its root, verify the target diff and named paths before
 invocation. Never pair an archive or copied tree with a separate base checkout,
 or borrow another checkout's `node_modules`.
+
+Resolve applicable instruction files before starting a safe-mode reviewer. Give
+their exact paths in the handoff; when none exist in the target checkout, say so
+and tell the reviewer not to search unrelated worktrees. Do not spend an
+expensive reviewer's orientation budget rediscovering workspace layout that the
+coordinator already knows.
 
 Give a candid handoff: intent and acceptance criteria; complexity and tradeoffs;
 vulnerabilities and brittle areas; accepted or deferred risks; uncertain
@@ -97,7 +112,9 @@ a clean verdict.
 Use a compact prompt:
 
 ```text
-Read the applicable AGENTS.md. Review <target> and relevant surrounding code.
+Repository instructions: <read these exact AGENTS.md paths, or none exist in
+the target checkout; do not search outside it>.
+Review <target> and relevant surrounding code.
 
 Intent and acceptance criteria: <...>
 Known complexity, vulnerabilities, weak points, and accepted/deferred risks: <...>
@@ -139,6 +156,13 @@ the target diff before invocation, compare them again after every terminal
 outcome, and report unexpected changes without reverting them.
 
 Use `--model best --effort max` for explicit max requests.
+
+For a bounded run with a prompt file, prefer
+`scripts/run-claude-review.sh <seconds> <model> <effort> <prompt-file>`. It
+enforces the deadline in the child process, preserves the raw JSONL before
+filtering it, reports every pipeline component's status, and requires a terminal
+success event. Keep the raw stream outside the repository and remove it after
+extracting the review evidence.
 
 From Claude, use Codex's native observable review command:
 
@@ -188,6 +212,22 @@ deferred and accepted risks visible without re-arguing them; and focus on the
 new delta, its interaction with the original change, and regressions introduced
 by fixes.
 
+When sequential reviews share expensive repository context, optionally maintain
+a context capsule in a local workflow artifact. This transfers facts, not model
+state, so `--no-session-persistence` remains in force and each verdict stays
+in a fresh process with an explicit, auditable handoff. Keep only:
+
+- the reviewed base/target, changed paths, and stable repository map;
+- canonical implementation owners and non-obvious invariants;
+- verified commands, runtime constraints, benchmark method, and noise floor;
+- test and measurement evidence, unresolved risks, and the finding ledger; and
+- open questions for the next target.
+
+Exclude transcripts, hidden reasoning, raw tool events, and abandoned
+hypotheses. Revalidate refs, worktree status, runtime, and any mutable facts
+before reuse, mark stale entries, and pass only the parts relevant to the next
+review.
+
 ## Observe and finish
 
 Monitor the structured stream. For Claude, track `system` status, the visible
@@ -212,15 +252,31 @@ Keep the relayed progress equally concise for either; never relay hidden
 reasoning or raw event noise. Success requires a terminal success result, not
 exit code zero or silence.
 
-Treat liveness as adaptive and bounded. Before starting, choose a soft stall
-window and a hard run limit from target breadth, requested effort, and known
-long-running checks. Three minutes normally and six at max are initial soft
-windows for a small target, not fixed entitlements. Review-relevant text and
-tool events reset the soft window; adapt it to their observed cadence, but never
-extend the hard limit. Active tools use their own timeout, and hidden thinking
-does not count. At the soft limit, grant one bounded grace window only when
-completed checks and an explicit synthesis phase show useful progress. Cancel
-otherwise, at the hard limit, or when the same infrastructure failure repeats.
+Preserve the raw structured stream before applying a display filter, and check
+the statuses of the reviewer, capture, and filter separately. A broken filter
+can close the pipe, leave only an initial event, and still make the reviewer
+process appear to exit successfully. Validate the filter before a paid run and
+accept success only when the preserved stream contains the reviewer's terminal
+success event.
+
+Treat liveness as adaptive and bounded. Before starting, estimate the expected
+event cadence from the target's breadth and coupling, the requested review
+depth, repository-orientation cost, and the longest planned check. Use that
+estimate to choose a soft stall window and a separate hard run limit with an
+explicit synthesis reserve. Review-relevant events reset the soft window, and
+completed phases can refine the expected cadence without extending the hard
+limit. While a tool is active, use its declared timeout. At a soft stall,
+continue only when concrete progress and the remaining work, including
+synthesis, still fit within the hard limit. Cancel otherwise, at the hard limit,
+or when the same infrastructure failure repeats.
+
+Liveness is not convergence. Derive phase budgets from the work needed for
+orientation, static analysis, reproductions, tests or measurements, and final
+synthesis. Put those budgets, the cutoff for new investigations, and the
+synthesis reserve in the initial prompt. If an investigation no longer fits,
+require the reviewer to stop and return a terminal verdict with the evidence
+gap. Enforce the hard limit across the reviewer process group; never extend it
+merely because the reviewer remains active.
 
 On failure or cancellation, report the reviewer, model, effort, target, elapsed
 time, exit code, last meaningful event, and provider state. Validate and present
