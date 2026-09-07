@@ -15,18 +15,9 @@ Everything is skill issues
 - [using-git][11]
 - [using-git-worktrees][12]
 
-## Options
-
-| Option                   | Description                                                                      |
-| ------------------------ | -------------------------------------------------------------------------------- |
-| -g, --global             | Install to user directory instead of project                                     |
-| -a, --agent \<agents...> | Target specific agents (e.g. `claude-code`, `codex`), see [Available Agents][13] |
-| -s, --skill \<skills...> | Install specific skills by name (use `'*'` for all skills)                       |
-| -l, --list               | List available skills without installing                                         |
-
-## In This Repo
-
 ### clean-git-repo
+
+[SKILL.md][13]
 
 Prune a git repository's merged, gone, and stale branches (squash-merges
 included), plus stale remote-tracking refs, worktrees, and local-only tags.
@@ -39,6 +30,8 @@ npx skills add webpro/skills --skill clean-git-repo
 
 ### configure-knip
 
+[SKILL.md][14]
+
 Set up and optimize Knip configuration to find unused files, dependencies, and
 exports. Use when configuring knip.json or cleaning up a JavaScript or
 TypeScript codebase.
@@ -49,6 +42,8 @@ npx skills add webpro/skills --skill configure-knip
 
 ### cross-review
 
+[SKILL.md][15]
+
 Hand local work, a branch, commit, or focused code scope to a different coding
 agent for an independent review with balanced model defaults.
 
@@ -57,6 +52,8 @@ npx skills add webpro/skills --skill cross-review
 ```
 
 ### eval-skill
+
+[SKILL.md][16]
 
 Measure whether a skill fires when it should and whether its output beats no
 skill at all, then fix what the measurement exposes. Bundles a trigger harness
@@ -68,6 +65,8 @@ npx skills add webpro/skills --skill eval-skill
 
 ### optimize-javascript
 
+[SKILL.md][17]
+
 Optimize slow JavaScript and TypeScript hot paths, parsers, allocation-heavy
 code, startup, and module loading for V8 and Node.js.
 
@@ -76,6 +75,8 @@ npx skills add webpro/skills --skill optimize-javascript
 ```
 
 ### publish-pr-review
+
+[SKILL.md][18]
 
 Publish an already-completed pull request review as one concise verdict with
 actionable findings attached inline.
@@ -86,6 +87,8 @@ npx skills add webpro/skills --skill publish-pr-review
 
 ### review-prose
 
+[SKILL.md][19]
+
 Draft, audit, and revise documentation and public technical copy while
 preserving facts, voice, and project style.
 
@@ -94,6 +97,8 @@ npx skills add webpro/skills --skill review-prose
 ```
 
 ### send-ntfy-notification
+
+[SKILL.md][20]
 
 Send a plain-text ntfy notification after a task is verified complete and the
 notification is authorized.
@@ -104,6 +109,8 @@ npx skills add webpro/skills --skill send-ntfy-notification
 
 ### suggest-pr-reviewers
 
+[SKILL.md][21]
+
 Rank candidate reviewers by ownership and recency among authors of existing
 lines changed in a diff, using chunk-level Git blame.
 
@@ -112,6 +119,8 @@ npx skills add webpro/skills --skill suggest-pr-reviewers
 ```
 
 ### triage-issues
+
+[SKILL.md][22]
 
 Guides bug report and pull request investigation and reproduction. Confirms
 reported behavior is wrong, reproduces issues locally, and checks for
@@ -124,6 +133,8 @@ npx skills add webpro/skills --skill triage-issues
 
 ### using-git
 
+[SKILL.md][23]
+
 House commit, pull request, and rebase workflow, including commit style, issue
 references, and commit-signing failures.
 
@@ -133,6 +144,8 @@ npx skills add webpro/skills --skill using-git
 
 ### using-git-worktrees
 
+[SKILL.md][24]
+
 Discover, select, reuse, or create checkouts and worktrees from any starting
 directory while keeping shared `.agents` state at the workspace root.
 
@@ -140,15 +153,24 @@ directory while keeping shared `.agents` state at the workspace root.
 npx skills add webpro/skills --skill using-git-worktrees
 ```
 
+## Options
+
+| Option                   | Description                                                                      |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| -g, --global             | Install to user directory instead of project                                     |
+| -a, --agent \<agents...> | Target specific agents (e.g. `claude-code`, `codex`), see [Available Agents][25] |
+| -s, --skill \<skills...> | Install specific skills by name (use `'*'` for all skills)                       |
+| -l, --list               | List available skills without installing                                         |
+
 ## Good Skills Elsewhere
 
 | Repository                                         | Install                                                                                      |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| [mcollina/skills][14]                              | `npx skills add mcollina/skills --skill node --skill typescript-magician`                    |
-| [theclaymethod/unslop][15]                         | `npx skills add theclaymethod/unslop`                                                        |
-| [mattpocock/skills][16]                            | `npx skills add mattpocock/skills`                                                           |
-| [currents-dev/playwright-best-practices-skill][17] | `npx skills add currents-dev/playwright-best-practices-skill`                                |
-| [obra/superpowers][18]                             | `npx skills add obra/superpowers --skill systematic-debugging --skill receiving-code-review` |
+| [mcollina/skills][26]                              | `npx skills add mcollina/skills --skill node --skill typescript-magician`                    |
+| [theclaymethod/unslop][27]                         | `npx skills add theclaymethod/unslop`                                                        |
+| [mattpocock/skills][28]                            | `npx skills add mattpocock/skills`                                                           |
+| [currents-dev/playwright-best-practices-skill][29] | `npx skills add currents-dev/playwright-best-practices-skill`                                |
+| [obra/superpowers][30]                             | `npx skills add obra/superpowers --skill systematic-debugging --skill receiving-code-review` |
 
 [1]: #clean-git-repo
 [2]: #configure-knip
@@ -162,9 +184,21 @@ npx skills add webpro/skills --skill using-git-worktrees
 [10]: #triage-issues
 [11]: #using-git
 [12]: #using-git-worktrees
-[13]: https://github.com/vercel-labs/skills#supported-agents
-[14]: https://github.com/mcollina/skills
-[15]: https://github.com/theclaymethod/unslop
-[16]: https://github.com/mattpocock/skills
-[17]: https://github.com/currents-dev/playwright-best-practices-skill
-[18]: https://github.com/obra/superpowers
+[13]: ./skills/clean-git-repo/SKILL.md
+[14]: ./skills/configure-knip/SKILL.md
+[15]: ./skills/cross-review/SKILL.md
+[16]: ./skills/eval-skill/SKILL.md
+[17]: ./skills/optimize-javascript/SKILL.md
+[18]: ./skills/publish-pr-review/SKILL.md
+[19]: ./skills/review-prose/SKILL.md
+[20]: ./skills/send-ntfy-notification/SKILL.md
+[21]: ./skills/suggest-pr-reviewers/SKILL.md
+[22]: ./skills/triage-issues/SKILL.md
+[23]: ./skills/using-git/SKILL.md
+[24]: ./skills/using-git-worktrees/SKILL.md
+[25]: https://github.com/vercel-labs/skills#supported-agents
+[26]: https://github.com/mcollina/skills
+[27]: https://github.com/theclaymethod/unslop
+[28]: https://github.com/mattpocock/skills
+[29]: https://github.com/currents-dev/playwright-best-practices-skill
+[30]: https://github.com/obra/superpowers
