@@ -38,26 +38,15 @@ release ID:
   Codex, use the current balanced model/high normally and flagship/max
   explicitly.
 
-Model names belong to one CLI only. Claude's aliases (`opus`, `sonnet`, `best`,
-any `claude-*` id) are not Codex models, and passing one to `codex --model`
-starts a turn, spends tokens, and then fails at the API with `The 'sonnet' model
-is not supported when using Codex with a ChatGPT account` plus a `turn.failed`.
-Its closing message reads "Review was interrupted. Please re-run". That failure
-looks like a result, so treat `turn.failed` as fatal rather than retrying.
+Use only names from that reviewer's catalog; Claude aliases are not Codex
+models. If relying on Codex's configured default, first verify that it meets the
+requested model policy. Treat `turn.failed` as failure regardless of the closing
+prose; retry only under the model-negotiation rule below.
 
-Resolve each reviewer's model from that reviewer's own catalog. When Codex's
-current tier names are not certain, omit `--model` entirely: Codex then uses the
-`model` in `~/.codex/config.toml`, which is valid by construction. Omitting the
-flag beats guessing one.
-
-Record the requested alias or default. Claude also reports the concrete model on
-its initial `system` event and again on every `assistant` message, so record that
-resolved id as the review evidence. Codex reports no model in its stream, so
-there the request is the only record: say the model is unconfirmed rather than
-implying the stream verified it.
-
-Neither CLI reports the reasoning effort it actually applied. Both accept the
-flag, so report effort as requested, never as observed.
+Record the requested model and effort, plus Claude's resolved model from its
+`system` or `assistant` messages. Codex does not report its resolved model, so
+label it unconfirmed. Neither CLI confirms applied effort: report it as
+requested.
 
 For a normal review, do not enable premium service tiers, max effort, automatic
 fallback, or enlarged output budgets. Set `CLAUDE_CODE_MAX_OUTPUT_TOKENS` only
@@ -70,12 +59,21 @@ the invoking agent's model is not an independent review.
 
 ## Define the target and handoff
 
-Identify one target:
+Choose one target and pin its commit IDs in the handoff:
 
-- branch against its actual base;
-- one commit;
-- staged, unstaged, and untracked local work; or
-- named paths, symbols, or lines plus relevant callers and tests.
+| Target                                  | Review scope                                                                                           |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Committed branch or PR                  | Merge-base with its actual base through the target commit; excludes dirty work                         |
+| One commit                              | Parent through commit; use the empty tree for a root commit and name the comparison parent for a merge |
+| Local work                              | HEAD through the index and working tree, plus untracked files                                          |
+| Complete candidate including local work | Pinned branch merge-base through the index and working tree, plus untracked files                      |
+| Named paths, symbols, or lines          | Explicit revisions or local states, with callers and tests as supporting evidence                      |
+
+For committed targets, read the pinned revisions rather than overlying dirty
+files. For local targets, inspect staged and unstaged states separately: a
+defect in the index remains actionable even if the working tree fixes it. Label
+such findings as index-only. Supporting context does not expand the selected
+target.
 
 Choose the review unit before invoking the reviewer. Keep a commit separate when
 its behavior or risk is independently testable, or when attribution matters.
@@ -96,43 +94,69 @@ available. From its root, verify the target diff and named paths before
 invocation. Never pair an archive or copied tree with a separate base checkout,
 or borrow another checkout's `node_modules`.
 
+Before every reviewer invocation, snapshot repository status, target refs and
+diffs, and in-scope untracked contents outside the repository. Keep review
+inputs unchanged; compare snapshots after every terminal outcome. Report
+unexpected changes without reverting them. If reviewed evidence changed, the
+verdict cannot establish that the current target is clean.
+
 Resolve applicable instruction files before starting a safe-mode reviewer. Give
 their exact paths in the handoff; when none exist in the target checkout, say so
-and tell the reviewer not to search unrelated worktrees. Do not spend an
-expensive reviewer's orientation budget rediscovering workspace layout that the
-coordinator already knows.
+and tell the reviewer not to search unrelated worktrees.
 
-Give a candid handoff: intent and acceptance criteria; complexity and tradeoffs;
-vulnerabilities and brittle areas; accepted or deferred risks; uncertain
-assumptions; test evidence and gaps; and prior finding dispositions. Label
-pre-existing risks, but include them when the change depends on, exposes, or
-worsens them. Never include secret values. Accurate transfer matters more than
-a clean verdict.
+Give a candid handoff using the template below. Distinguish evidence from
+assumptions; the reviewer must verify the coordinator's claims. Label
+pre-existing risks and include them when the change depends on, exposes, or
+worsens them. Never include secret values.
 
-Use a compact prompt:
+Budget for a delivered verdict. Allocate roughly 20% to orientation, 50% to
+investigation and testing, 20% to the final verdict, and 10% to delivery
+overhead. This puts the tool cutoff at 70% and the response deadline at 90% of
+the total. Adjust the allocation before launch when the target warrants it;
+activity alone does not extend it.
+
+Convert those shares to elapsed-time checkpoints from reviewer launch in the
+prompt:
 
 ```text
 Repository instructions: <read these exact AGENTS.md paths, or none exist in
 the target checkout; do not search outside it>.
-Review <target> and relevant surrounding code.
+Review <target, pinned commit IDs, and included local states>.
 
 Intent and acceptance criteria: <...>
-Known complexity, vulnerabilities, weak points, and accepted/deferred risks: <...>
+Known complexity, tradeoffs, vulnerabilities, weak points, and accepted/deferred risks: <...>
 Tests, evidence, assumptions, and gaps: <...>
 Prior findings and dispositions: <none, or ID/status/rationale/evidence>
 User-requested focus or evidence (verbatim, if any): <...>
+Severity filter: <user-requested threshold, or all actionable severities>.
 
-Keep progress observable: announce the starting phase and give one-sentence
-updates at meaningful phase changes or completed checks, especially before long
-analysis or test runs. Do not narrate routine tool calls or speculate. Claude
-honors this and streams the updates as it works; Codex answers once at the end
-regardless, so expect its progress to arrive as its plan and command events
-instead.
+Total budget: <duration>. Elapsed checkpoints from launch:
+orientation done by <duration>; stop all tools by <duration>;
+return final response by <duration>; hard process limit <duration>.
+Check elapsed wall time after orientation, after slow calls, and before another investigation.
+Bound command timeouts by the tool cutoff, then use only collected evidence.
 
-Find concrete regressions introduced by the change. Give severity, file and
-line, failure scenario, and smallest coherent fix. Distinguish disclosed
-pre-existing risks from new regressions. Omit style-only observations and say
-explicitly when there are no actionable findings. Do not create or touch files.
+Read the whole diff, then prioritize changed behavior and its callers. Verify
+handoff claims against the code. Reuse supplied check results unless stale or a
+specific uncertainty needs independent testing. Stop probing a root cause once
+reproduction, attribution, and correction are clear.
+
+Announce the starting phase and give concise updates at meaningful phase changes
+or completed checks, especially before long analysis or tests. Do not narrate
+routine tool calls or speculate.
+
+Find concrete regressions within the target; surrounding code supplies evidence.
+Give severity, file and line in the reviewed state, failure scenario, supporting
+evidence, and smallest coherent fix. Label index-only findings. Distinguish
+disclosed pre-existing risks from new regressions. Omit style-only observations.
+Do not create or touch files.
+
+Return the verdict directly in your final response, without saving a report or
+requesting plan approval. Identify the reviewed target and severity filter,
+include findings and material coverage gaps, and state when no findings meet the
+threshold. Omit an inventory of passing checks and implementation plans. Keep a
+focused review under about 500 words when findings allow; retain the evidence
+needed to assess each finding.
 ```
 
 ## Invoke the reviewer
@@ -151,18 +175,15 @@ proceeding.
 `--safe-mode` disables project customizations and instruction discovery, so the
 prompt must tell Claude to read `AGENTS.md`. Plan mode plus the no-file prompt
 provides only best-effort read-only behavior: it is not a filesystem sandbox and
-may still save a report in Claude's user state. Snapshot repository status and
-the target diff before invocation, compare them again after every terminal
-outcome, and report unexpected changes without reverting them.
+may still save a report in Claude's user state.
 
 Use `--model best --effort max` for explicit max requests.
 
-For a bounded run with a prompt file, prefer
-`scripts/run-claude-review.sh <seconds> <model> <effort> <prompt-file>`. It
-enforces the deadline in the child process, preserves the raw JSONL before
-filtering it, reports every pipeline component's status, and requires a terminal
-success event. Keep the raw stream outside the repository and remove it after
-extracting the review evidence.
+For a bounded run with a prompt file, prefer `scripts/run-claude-review.sh
+<seconds> <model> <effort> <prompt-file>`. It enforces the deadline in the child
+process, preserves the raw JSONL before filtering it, reports every pipeline
+component's status, and requires a terminal success event. Keep the raw stream
+outside the repository and remove it after extracting the review evidence.
 
 From Claude, use Codex's native observable review command:
 
@@ -179,8 +200,8 @@ target flags: state the target in the prompt instead ("Review the changes on the
 current branch against base branch `main`"), and confirm from the streamed tool
 events that it diffed the intended range. Reach for `--base`/`--commit`/
 `--uncommitted` only when handing over no prompt at all, which forfeits the
-handoff. For explicit max, use the current flagship model and
-`-c model_reasoning_effort=max`.
+handoff. For explicit max, use the current flagship model and `-c
+model_reasoning_effort=max`.
 
 Codex applies `model_reasoning_effort` from `~/.codex/config.toml` unless
 overridden, so pass it explicitly on every run; a config default of `xhigh`
@@ -200,22 +221,18 @@ any other failure.
 
 ## Subsequent rounds
 
-Use a fresh invocation and a compact carry-forward, not the transcript. Include
-the prior reviewed commit when available, changed paths or symbols, unresolved
-risks, and each finding's stable ID, status (`fixed`, `rejected`, `deferred`, or
-`accepted risk`), rationale, and evidence. Assign and preserve IDs such as
-`AR-1`.
+Start each round with a fresh process, `--no-session-persistence`, and a compact
+handoff. Include the prior reviewed commit when available, changed paths or
+symbols, unresolved risks, and findings with stable IDs (such as `AR-1`), status
+(`fixed`, `rejected`, `deferred`, or `accepted risk`), rationale, and evidence.
 
-Ask the reviewer to verify fixed findings and report them only when incomplete
-or regressed; avoid repeating rejected findings without new evidence; keep
-deferred and accepted risks visible without re-arguing them; and focus on the
-new delta, its interaction with the original change, and regressions introduced
-by fixes.
+Verify fixed findings and report only incomplete or regressed fixes. Revisit
+rejected findings only with new evidence; keep deferred and accepted risks
+visible without re-arguing them. Focus on the new delta, its interaction with
+the original change, and regressions from fixes.
 
-When sequential reviews share expensive repository context, optionally maintain
-a context capsule in a local workflow artifact. This transfers facts, not model
-state, so `--no-session-persistence` remains in force and each verdict stays
-in a fresh process with an explicit, auditable handoff. Keep only:
+For sequential reviews sharing expensive context, optionally keep a local
+context capsule containing:
 
 - the reviewed base/target, changed paths, and stable repository map;
 - canonical implementation owners and non-obvious invariants;
@@ -224,59 +241,44 @@ in a fresh process with an explicit, auditable handoff. Keep only:
 - open questions for the next target.
 
 Exclude transcripts, hidden reasoning, raw tool events, and abandoned
-hypotheses. Revalidate refs, worktree status, runtime, and any mutable facts
-before reuse, mark stale entries, and pass only the parts relevant to the next
-review.
+hypotheses. Before reuse, revalidate refs, worktree status, runtime, and other
+mutable facts; mark stale entries and pass only relevant facts.
 
 ## Observe and finish
 
-Monitor the structured stream. For Claude, track `system` status, the visible
-text it streams as it works, review-relevant tool events, rate limits, and the
-terminal `result`, which carries `total_cost_usd`, `num_turns`, and `modelUsage`.
-For Codex, track the `todo_list` item it emits early and each `item.completed`
-command execution, then the single closing `agent_message` and `turn.completed`;
-its usage counters report zeros, so cost and token figures are unavailable on
-that side and belong in no report.
+Monitor each reviewer's structured stream:
 
-Keep display filtering separate from liveness tracking. For Claude, preserve
-`assistant` messages containing `tool_use` blocks and `user` messages containing
-their `tool_result` blocks in the liveness path even when neither is relayed to
-the user. A text-only filter hides active work and creates false stalls.
+- Claude: `system` status, visible text, review-relevant tool events, rate
+  limits, and terminal `result` with `total_cost_usd`, `num_turns`, and
+  `modelUsage`.
+- Codex: early `todo_list`, each `item.completed` command execution, closing
+  `agent_message`, and `turn.completed`. Omit cost and token figures: its usage
+  counters report zeros.
 
-Progress therefore looks different by reviewer: relay Claude's narrated phases as
-they arrive, and Codex's plan with the checks it completes. Treat a Codex run
-that has emitted its plan and is still running commands as progressing, not
-stalled.
+Relay Claude's narrated phases as they arrive and Codex's plan and completed
+checks, equally concisely. Never relay hidden reasoning or raw event noise.
 
-Keep the relayed progress equally concise for either; never relay hidden
-reasoning or raw event noise. Success requires a terminal success result, not
-exit code zero or silence.
+Track liveness independently of display filtering. Count Claude's `assistant`
+messages containing `tool_use` blocks and `user` messages containing
+`tool_result` blocks even when not displayed. A Codex run executing commands
+after its plan is also progressing.
 
-Preserve the raw structured stream before applying a display filter, and check
-the statuses of the reviewer, capture, and filter separately. A broken filter
-can close the pipe, leave only an initial event, and still make the reviewer
-process appear to exit successfully. Validate the filter before a paid run and
-accept success only when the preserved stream contains the reviewer's terminal
-success event.
+Validate the filter before a paid run. Preserve the raw structured stream before
+filtering, check reviewer, capture, and filter statuses separately, and require
+the reviewer's terminal success event in the raw stream. Exit code zero or
+silence does not establish success.
 
-Treat liveness as adaptive and bounded. Before starting, estimate the expected
-event cadence from the target's breadth and coupling, the requested review
-depth, repository-orientation cost, and the longest planned check. Use that
-estimate to choose a soft stall window and a separate hard run limit with an
-explicit synthesis reserve. Review-relevant events reset the soft window, and
-completed phases can refine the expected cadence without extending the hard
-limit. While a tool is active, use its declared timeout. At a soft stall,
-continue only when concrete progress and the remaining work, including
-synthesis, still fit within the hard limit. Cancel otherwise, at the hard limit,
-or when the same infrastructure failure repeats.
+Choose a soft stall window from the expected event cadence and longest planned
+check. Review-relevant events reset that window, but never the phase cutoffs or
+hard deadline. While a tool is active, honor its declared timeout within those
+limits. Cancel on a stall that leaves insufficient time to finish, repeated
+infrastructure failure, or the hard deadline.
 
-Liveness is not convergence. Derive phase budgets from the work needed for
-orientation, static analysis, reproductions, tests or measurements, and final
-synthesis. Put those budgets, the cutoff for new investigations, and the
-synthesis reserve in the initial prompt. If an investigation no longer fits,
-require the reviewer to stop and return a terminal verdict with the evidence
-gap. Enforce the hard limit across the reviewer process group; never extend it
-merely because the reviewer remains active.
+Enforce the hard deadline across the reviewer process group. The watchdog
+terminates the run; it does not tell the reviewer to wrap up. The handoff owns
+the earlier tool cutoff and response deadline. Check progress against them, not
+just liveness. Finish with explicit coverage gaps when the remaining evidence
+cannot be gathered in time; a saved report alone is not terminal success.
 
 On failure or cancellation, report the reviewer, model, effort, target, elapsed
 time, exit code, last meaningful event, and provider state. Validate and present
@@ -289,6 +291,12 @@ authorization. Use a temporary `--debug-file` only when structured events cannot
 explain a failure. Claude logs may expose local configuration: keep them outside
 the repository, never quote them wholesale, and move them to Trash after use.
 
-Validate every finding against the code. Apply accepted fixes separately, run
-relevant checks, and repeat the independent review only when the target
-materially changed.
+A terminal success event establishes execution success, not review completeness.
+Validate findings against the reviewed source state and check coverage against
+the requested target. Report material coverage gaps or unresolved evidence
+needed for the verdict as an incomplete review. Qualify any no-findings verdict
+by target and severity filter; findings excluded by that filter do not make the
+change clean.
+
+Apply accepted fixes separately, run relevant checks, and repeat the independent
+review only when authorized and the target materially changed.
