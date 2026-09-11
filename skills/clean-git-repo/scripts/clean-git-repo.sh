@@ -232,7 +232,7 @@ matches_keep() {
 }
 
 worktree_protection_reason() { # worktree-path
-  local wt="$1" status
+  local wt="$1" entry path other_ignored=0
   if [ "$wt" = "$MAIN_WORKTREE" ]; then
     echo "main worktree"
     return 0
@@ -241,16 +241,23 @@ worktree_protection_reason() { # worktree-path
     echo "locked worktree"
     return 0
   fi
-  if ! status=$(git -C "$wt" status --porcelain --untracked-files=normal --ignored 2>/dev/null); then
+  if ! git -C "$wt" status --porcelain -z --untracked-files=normal --ignored=matching >"$TMP/worktree_status" 2>/dev/null; then
     echo "unavailable worktree"
     return 0
   fi
-  if [ -n "$status" ]; then
-    if printf '%s\n' "$status" | grep -qv '^!! '; then
+  while IFS= read -r -d '' entry; do
+    if [ "${entry:0:3}" != '!! ' ]; then
       echo "dirty worktree"
-    else
-      echo "worktree contains ignored files"
+      return 0
     fi
+    path=${entry:3}
+    case "$path" in
+      node_modules/*|*/node_modules/*|dist/*|*/dist/*) ;;
+      *) other_ignored=1 ;;
+    esac
+  done <"$TMP/worktree_status"
+  if [ "$other_ignored" = 1 ]; then
+    echo "worktree contains other ignored files"
     return 0
   fi
   if git -C "$wt" submodule status --recursive 2>/dev/null | grep -q .; then

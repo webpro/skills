@@ -10,8 +10,9 @@ description: >-
   delete old branches, prune origin/* refs, or clear out a repo's
   branch/worktree list, including from a directory containing worktrees from one
   or more repositories. Reports first (dry run); never touches
-  current/default/kept branches or main, dirty, ignored-content, locked,
-  detached, unavailable, or submodule-containing worktrees.
+  current/default/kept branches or main, dirty, locked, detached, unavailable,
+  or submodule-containing worktrees. Ignored node_modules and dist output is
+  disposable; other ignored files remain protected.
 ---
 
 # Clean Git Repo
@@ -42,14 +43,13 @@ The script's `--help` lists every flag; the key ones appear below.
 
 | Tier        | Actions                                                                                                                                                                                                                                                                                                                               | Confirmation           |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| **Safe**    | `git fetch --prune` (remote-tracking refs), `git worktree prune`, delete **merged** branches (tip provably in the merge), first removing an attached clean linked worktree with no ignored files and without `--force`                                                                                                                | none (apply + report)  |
+| **Safe**    | `git fetch --prune` (remote-tracking refs), `git worktree prune`, delete **merged** branches (tip provably in the merge), first removing an attached clean linked worktree with only disposable ignored files and without `--force`                                                                                                    | none (apply + report)  |
 | **Confirm** | delete **MERGED-but-advanced** (`--force-merged`), **GONE** (`--force-gone`), or **STALE** (`--stale`) branches and any attached safely removable linked worktrees; matching **remote** branches whose remote tip is identical or provably merged (`--remote`); local tags absent from the remote (`--prune-tags`); `git gc` (`--gc`) | ask the user first     |
-| **Never**   | the current branch, default branch, `--keep` matches, and main, dirty, ignored-content, locked, detached, unavailable, or submodule-containing worktrees                                                                                                                                                                              | excluded by the script |
+| **Never**   | the current branch, default branch, `--keep` matches, and main, dirty, locked, detached, unavailable, or submodule-containing worktrees; worktrees with other ignored files                                                                                                                                                           | excluded by the script |
 
-A linked worktree follows its branch's existing tier only when it is clean and
-contains no ignored files or submodules. On apply, the script rechecks those
-conditions, runs `git worktree remove` without `--force`, and deletes the branch
-only if removal succeeds. The script never force-removes a worktree.
+A linked worktree follows its branch's tier when it has no tracked or untracked changes, submodules, or non-disposable ignored files. Ignored content in `node_modules/` and `dist/` directories at any depth is disposable; other ignored files remain protected.
+
+On apply, the script rechecks those conditions, runs `git worktree remove` without `--force`, and deletes the branch only if removal succeeds. Disposable ignored files are removed with the worktree. The script never force-removes a worktree.
 
 A branch is **merged** when GitHub (`gh`) reports its PR merged, or its tip is
 an ancestor of the base, so squash- and rebase-merges are caught, not just
@@ -126,9 +126,7 @@ Other flags: `--base <branch>` to override default-branch detection, `--keep
   the user.
 - **No remote** → fetch and `gh` are skipped; only local-merged and stale
   detection run.
-- **Dirty, ignored-content, locked, detached, unavailable, main, or
-  submodule-containing worktree** → the worktree is reported as protected and
-  neither it nor its branch is touched.
+- **Protected worktree**: main, dirty, locked, detached, unavailable, and submodule-containing worktrees are kept, as are worktrees with non-disposable ignored files.
 - **No repository at the current directory** → immediate child worktrees are
   grouped by Git common directory. If none exist, the script exits without
   acting.
