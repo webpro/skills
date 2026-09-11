@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""Measure the ranker against merged pull requests as ground truth.
+
+Replays each pull request as if it were open: the ranking sees only history older than the
+merge commit, and hits are the people who actually reviewed it. Review data is fetched once
+into a cache, so repeated runs and algorithm comparisons cost no API budget.
+
+Usage: backtest [-n CASES] [--since DAYS] [--top K] [--cache PATH] [--script PATH] [--refresh]
+                [--set NAME=VALUE]
+
+Run it inside a clone of the repository under test. Needs `gh` authenticated for the first run.
+A blobless clone is enough and much faster: git clone --filter=blob:none --no-checkout URL
+"""
+from __future__ import annotations
+
+import argparse
+import collections
+import importlib.machinery
+import importlib.util
+import json
+import os
+import posixpath
+import statistics
+import subprocess
+import sys
+from pathlib import Path
+
+CHUNK = 200  # pull request aliases per GraphQL request; 3.1s measured, 600 still succeeds
+
+
+def load_ranker(path):
+    sys.dont_write_bytecode = True  # no __pycache__ beside the script being measured
+    loader = importlib.machinery.SourceFileLoader("reviewers", str(path))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("reviewers", loader))
+    loader.exec_module(module)
+    return module
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(prog="backtest", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-n", "--cases", type=int, default=200, help="pull requests to replay (default: 200)")
+    parser.add_argument("--since", type=int, default=365, help="history window per case in days (default: 365)")
+    parser.add_argument("--top", type=int, default=3, help="hit@K to report alongside hit@1 (default: 3)")
+    parser.add_argument("--cache", default=".backtest-cache.json", help="review data cache path")
+    parser.add_argument("--script", default=str(Path(__file__).resolve().parents[1] / "scripts" / "reviewers"),
+                        help="ranker to measure (default: the shipped script)")
+    parser.add_argument("--refresh", action="store_true", help="refetch review data even if cached")
+    parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                        help="override a ranker constant, to measure whether it earns its place; repeatable")
+    return parser.parse_args()
+
+
+def fetch_reviews(rv, github, numbers):
+    """Review data for every pull request number, in batches."""
+    pulls = {}
+    for start in range(0, len(numbers), CHUNK):
+        batch = numbers[start:start + CHUNK]
+        print(f"  fetching {start + len(batch)}/{len(numbers)}", file=sys.stderr)
+        found, _ = github.lookup(batch, [])
+        pulls.update({str(number): pull for number, pull in found.items()})
+    return pulls
+
+
+def main():
+    args = parse_args()
+    rv = load_ranker(args.script)
+    for override in args.set:
+        name, _, value = override.partition("=")
+        if not hasattr(rv, name):
+            rv.die(f"Unknown ranker constant: {name}")
+        setattr(rv, name, float(value) if "." in value else int(value))
+
+    root = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+    if not root:
+        rv.die("Not a git repository")
+    os.chdir(root)
+    slug = rv.repo_slug()
+    if not slug:
+        rv.die("No GitHub remote found")
+
+    subjects = rv.git("log", "--first-parent", "--format=%H%x09%at%x09%s", "HEAD").splitlines()
+    merged = []
+    for line in subjects:
+        sha, at, subject = line.split("\t", 2)
+        number = rv.pr_number_from_subject(subject)
+        if number is not None:
+            merged.append({"sha": sha, "time": int(at), "pr": number})
+    if not merged:
+        rv.die("No pull request numbers in first-parent subjects; this repository is not a usable ground truth")
+
+    # Review data is needed for the cases themselves and for the history each case looks back over.
+    oldest_case = merged[min(args.cases, len(merged)) - 1]["time"]
+    relevant = [entry for entry in merged if entry["time"] >= oldest_case - args.since * 86400]
+
+    cache_path = Path(args.cache)
+    cache = {} if args.refresh or not cache_path.exists() else json.loads(cache_path.read_text())
+    wanted = [entry["pr"] for entry in relevant if str(entry["pr"]) not in cache]
+    if wanted:
+        print(f"Fetching review data for {len(wanted)} pull requests", file=sys.stderr)
+        cache.update(fetch_reviews(rv, rv.GitHub(*slug), wanted))
+        cache_path.write_text(json.dumps(cache))
+    pulls_by_number = {int(number): pull for number, pull in cache.items() if pull}
+
+    cases, ranks, no_candidates = 0, [], 0
+    hits_at_one, hits_at_top = 0, 0
+    control_at_one, control_at_top = 0, 0
+    for entry in merged:
+        if cases >= args.cases:
+            break
+        pull = pulls_by_number.get(entry["pr"])
+        if not pull:
+            continue
+        truth = rv.reviewers_of(pull)
+        author = (pull.get("author") or {}).get("login")
+        if not truth:
+            continue
+
+        changed = [p for p in rv.git("show", "-m", "--first-parent", "--name-only", "--format=",
+                                     entry["sha"]).split("\n")
+                   if p and posixpath.basename(p) not in rv.LOCKFILES]
+        if not changed:
+            continue
+        dirs = sorted({posixpath.dirname(path) or "." for path in changed})
+        history = rv.git("log", "--first-parent", "-m", f"--since={args.since} days ago",
+                         f"--max-count={rv.MAX_COMMITS}", "--format=%x01%H%x09%P%x09%at%x09%ae%x09%an%x09%s",
+                         "--name-only", f"{entry['sha']}~1", "--", *[rv.glob_pathspec(d) for d in dirs],
+                         check=False)
+        if not history:
+            continue
+
+        # Mirror the shipped cap: only the most relevant pull requests carry review data.
+        parsed = rv.parse_history(history)
+        numbers, _ = rv.lookup_plan(rv.weigh(parsed, changed, entry["time"]), max_prs=rv.MAX_PRS)
+        visible = {number: pulls_by_number[number] for number in numbers if number in pulls_by_number}
+        people, _, _ = rv.score(changed, parsed, visible, {}, entry["time"])
+
+        ranked = [p.display for p in sorted((p for p in people.all() if p.score > 0),
+                                            key=lambda p: (-p.score, -p.last, p.display))
+                  if p.display != author][:args.top]
+        # Control: the busiest reviewers in the same window, blind to which files changed. On a
+        # repository where two people review everything, this alone scores well and the ranking
+        # has to beat it to be worth anything.
+        window = collections.Counter()
+        for other in relevant:
+            if entry["time"] - args.since * 86400 <= other["time"] < entry["time"]:
+                window.update(rv.reviewers_of(pulls_by_number.get(other["pr"]) or {}))
+        control = [who for who, _ in window.most_common() if who != author][:args.top]
+
+        cases += 1
+        control_at_one += bool(control[:1]) and control[0] in truth
+        control_at_top += any(who in truth for who in control)
+        if not ranked:
+            no_candidates += 1
+            continue
+        position = next((i for i, who in enumerate(ranked) if who in truth), None)
+        if position is not None:
+            ranks.append(position + 1)
+            hits_at_one += position == 0
+            hits_at_top += 1
+
+    if not cases:
+        rv.die("No usable ground truth: no merged pull request had both review data and changed files")
+    print()
+    print(f"Repository: {slug[0]}/{slug[1]}   ranker: {args.script}")
+    print(f"Cases: {cases} merged pull requests with at least one review")
+    print(f"{'':22} {'ranked':>8} {'busiest reviewers (control)':>28}")
+    print(f"{'hit@1':22} {100 * hits_at_one / cases:7.1f}% {100 * control_at_one / cases:27.1f}%")
+    print(f"{'hit@' + str(args.top):22} {100 * hits_at_top / cases:7.1f}% {100 * control_at_top / cases:27.1f}%")
+    print(f"No candidate offered: {100 * no_candidates / cases:5.1f}%  ({no_candidates})")
+    if ranks:
+        print(f"Median rank of the first real reviewer, when found: {statistics.median(ranks):.1f}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except RuntimeError as error:
+        print(error, file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)

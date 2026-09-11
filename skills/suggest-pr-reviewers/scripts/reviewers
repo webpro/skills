@@ -1,0 +1,595 @@
+#!/usr/bin/env python3
+"""Rank pull request reviewers from the review and commit history of the changed paths.
+
+Usage: reviewers [-n LIMIT] [--since DAYS] [--exclude LOGIN] [--no-github] [branch] [base]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import posixpath
+import re
+import shutil
+import subprocess
+import sys
+import time
+from collections import defaultdict
+
+HALF_LIFE_DAYS = 90       # evidence loses half its weight every 90 days
+DIR_WEIGHT = 0.25         # a change to a sibling file counts a quarter of a change to the file itself
+AUTHOR_WEIGHT = 0.25      # authoring a past change counts a quarter of reviewing one
+# Reading 200 instead of 50 ranks no better on grafana, airflow or vite, and the request takes 3.1s
+# rather than 1.4s. Re-measure with tests/backtest --set MAX_PRS=N before raising it.
+MAX_PRS = 50              # pull requests whose reviews are fetched
+MAX_HASH_LOOKUPS = 40     # commits without a pull request number in their subject that are resolved by hash
+MAX_COMMITS = 5000
+FALLBACK_PRS = 30         # recent merged pull requests used when path evidence runs out
+REVIEW_STATES = {"APPROVED", "CHANGES_REQUESTED"}
+LOCKFILES = (
+    "yarn.lock", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "bun.lockb", "bun.lock",
+    "Cargo.lock", "Gemfile.lock", "poetry.lock", "Pipfile.lock", "composer.lock", "go.sum", "flake.lock",
+)
+BOT_NAME = re.compile(r"\[bot\]", re.I)
+SQUASH_SUBJECT = re.compile(r"\(#(\d+)\)\s*$")
+MERGE_SUBJECT = re.compile(r"^Merge pull request #(\d+)\b")
+NOREPLY_EMAIL = re.compile(r"^(?:\d+\+)?([^@]+)@users\.noreply\.github\.com$", re.I)
+REMOTE_SLUG = re.compile(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?/?$")
+PR_FIELDS = ("number author { login __typename } "
+             "reviews(first: 50, states: [APPROVED, CHANGES_REQUESTED]) { nodes { author { login __typename } state } }")
+
+
+def die(message, code=1):
+    print(message, file=sys.stderr)
+    sys.exit(code)
+
+
+def run(cmd, **kwargs):
+    return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
+
+
+def git(*args, check=True):
+    result = run(["git", *args])
+    if check and result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"git {' '.join(args)} failed")
+    return result.stdout
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        prog="reviewers",
+        description="Rank reviewers for a change by who reviewed and authored earlier changes to the same "
+                    "files and their sibling files. Run from anywhere inside the repository under review.",
+    )
+    parser.add_argument("-n", "--limit", type=int, default=5, help="maximum reviewers to show (default: 5)")
+    parser.add_argument("--since", type=int, default=365, metavar="DAYS",
+                        help="history window in days (default: 365)")
+    parser.add_argument("--exclude", action="append", default=[], metavar="LOGIN",
+                        help="exclude a GitHub login or git author name; repeatable")
+    parser.add_argument("--no-github", action="store_true", help="use commit history only; skip gh")
+    parser.add_argument("branch", nargs="?", default="HEAD", help="branch to analyze (default: HEAD)")
+    parser.add_argument("base", nargs="?", help="branch to diff against (default: the pull request base, "
+                                                "else main, master, or the remote HEAD)")
+    args = parser.parse_args()
+    if args.limit < 1:
+        parser.error("--limit must be a positive integer")
+    if args.since < 1:
+        parser.error("--since must be a positive number of days")
+    return args
+
+
+class Person:
+    """One person seen through commits, pull requests, or both."""
+
+    def __init__(self, login=None, email=None, name=None):
+        self.login = login
+        self.emails = {email.lower()} if email else set()
+        self.names = {name} if name else set()
+        self.review_score = 0.0
+        self.author_score = 0.0
+        self.reviewed = 0
+        self.authored = 0
+        self.last = 0
+        self.match = "dirs"
+
+    @property
+    def display(self):
+        return self.login or min(self.names, default=None) or min(self.emails, default="unknown")
+
+    @property
+    def score(self):
+        return self.review_score + AUTHOR_WEIGHT * self.author_score
+
+    def credit(self, unit, as_reviewer):
+        if as_reviewer:
+            self.review_score += unit["weight"]
+            self.reviewed += 1
+        else:
+            self.author_score += unit["weight"]
+            self.authored += 1
+        self.last = max(self.last, unit["time"])
+        if unit["match"] == "files":
+            self.match = "files"
+
+
+class People:
+    def __init__(self):
+        self.by_login = {}
+        self.by_email = {}
+        self.email_to_login = {}
+
+    def learn(self, email, login):
+        if email and login:
+            self.email_to_login[email.lower()] = login
+
+    def login_for(self, email):
+        if not email:
+            return None
+        if email.lower() in self.email_to_login:
+            return self.email_to_login[email.lower()]
+        match = NOREPLY_EMAIL.match(email)
+        return match.group(1) if match else None
+
+    def get(self, login=None, email=None, name=None):
+        login = login or self.login_for(email)
+        if login:
+            person = self.by_login.setdefault(login, Person(login=login))
+        else:
+            person = self.by_email.setdefault((email or name or "").lower(), Person(email=email, name=name))
+        if email:
+            person.emails.add(email.lower())
+        if name:
+            person.names.add(name)
+        return person
+
+    def all(self):
+        return list(self.by_login.values()) + list(self.by_email.values())
+
+
+class GitHub:
+    def __init__(self, owner, name):
+        self.owner = owner
+        self.name = name
+
+    def graphql(self, query, **variables):
+        args = ["gh", "api", "graphql", "-f", f"query={query}"]
+        for key, value in variables.items():
+            args += ["-F", f"{key}={value}"]
+        result = run(args)
+        # gh exits 1 when any alias fails (for example a subject that names an issue, not a pull
+        # request) but still prints the partial data; only a response without data is an error.
+        try:
+            data = json.loads(result.stdout).get("data")
+        except ValueError:
+            data = None
+        if not data:
+            lines = result.stderr.strip().splitlines()
+            raise RuntimeError(lines[-1] if lines else "gh api graphql failed")
+        return data
+
+    def lookup(self, numbers, shas):
+        """Pull requests by number, and commits by hash with their author login and associated pull request."""
+        if not numbers and not shas:
+            return {}, {}
+        commit_fields = f"oid author {{ user {{ login }} }} associatedPullRequests(first: 1) {{ nodes {{ {PR_FIELDS} }} }}"
+        parts = [f"p{n}: pullRequest(number: {n}) {{ {PR_FIELDS} }}" for n in numbers]
+        parts += [f'c{i}: object(oid: "{sha}") {{ ... on Commit {{ {commit_fields} }} }}' for i, sha in enumerate(shas)]
+        query = f"query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {' '.join(parts)} }} }}"
+        repository = self.graphql(query, owner=self.owner, name=self.name).get("repository") or {}
+        pulls = {node["number"]: node for alias, node in repository.items() if node and alias.startswith("p")}
+        commits = {node["oid"]: node for alias, node in repository.items() if node and alias.startswith("c")}
+        return pulls, commits
+
+    def recent_pull_requests(self, limit):
+        query = ("query($q: String!, $limit: Int!) { search(query: $q, type: ISSUE, first: $limit) "
+                 f"{{ nodes {{ ... on PullRequest {{ {PR_FIELDS} }} }} }} }}")
+        search = self.graphql(query, q=f"repo:{self.owner}/{self.name} is:pr is:merged sort:updated-desc",
+                              limit=limit).get("search") or {}
+        return [node for node in search.get("nodes", []) if node]
+
+    @staticmethod
+    def pull_request_for_branch(branch):
+        result = run(["gh", "pr", "view", branch, "--json", "number,author,baseRefName,reviews,reviewRequests"])
+        return json.loads(result.stdout) if result.returncode == 0 else None
+
+
+def is_bot(node):
+    return not node or node.get("__typename") == "Bot" or bool(BOT_NAME.search(node.get("login") or ""))
+
+
+def commit_login(node):
+    return (((node or {}).get("author") or {}).get("user") or {}).get("login")
+
+
+def pr_number_from_subject(subject):
+    match = SQUASH_SUBJECT.search(subject) or MERGE_SUBJECT.match(subject)
+    return int(match.group(1)) if match else None
+
+
+def reviewers_of(pull):
+    author = (pull.get("author") or {}).get("login")
+    return {review["author"]["login"] for review in (pull.get("reviews") or {}).get("nodes", [])
+            if review.get("state") in REVIEW_STATES and not is_bot(review.get("author"))
+            and review["author"]["login"] != author}
+
+
+def repo_slug():
+    for remote in ("origin", *git("remote").split()):
+        url = git("remote", "get-url", remote, check=False).strip()
+        match = REMOTE_SLUG.search(url) if url else None
+        if match:
+            return match.group(1), match.group(2)
+    return None
+
+
+def is_ref(path):
+    return run(["git", "show-ref", "--verify", "--quiet", path]).returncode == 0
+
+
+def is_branch(name):
+    return is_ref(f"refs/heads/{name}")
+
+
+def glob_pathspec(directory):
+    escaped = re.sub(r"([\\*?\[\]])", r"\\\1", directory)
+    return ":(glob)*" if directory == "." else f":(glob){escaped}/*"
+
+
+def parse_history(text):
+    commits = []
+    current = None
+    for line in text.splitlines():
+        if line.startswith("\x01"):
+            sha, parents, at, email, name, subject = line[1:].split("\t", 5)
+            current = {"sha": sha, "parents": parents.split(), "time": int(at), "email": email,
+                       "name": name, "pr": pr_number_from_subject(subject), "files": []}
+            commits.append(current)
+        elif line and current is not None:
+            current["files"].append(line)
+    return commits
+
+
+def rev_exists(rev):
+    return run(["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"]).returncode == 0
+
+
+def resolve_base(explicit, branch_pr):
+    """Prefer the remote-tracking base: a local main that nobody pulls (worktrees) falls behind."""
+    if explicit:
+        return explicit
+    names = [branch_pr["baseRefName"]] if branch_pr and branch_pr.get("baseRefName") else []
+    names += ["main", "master"]
+    for name in names:
+        for ref in (f"origin/{name}", name):
+            if rev_exists(ref):
+                return ref
+    return run(["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]).stdout.strip() or "main"
+
+
+def remote_alternative(base):
+    """A remote-tracking ref that would be fresher than this base, if the base is not one already.
+
+    This has to match a ref exactly. Resolving the name instead would accept `origin/HEAD~20`, since
+    a revision suffix applies happily to the `origin/HEAD` that every clone has.
+    """
+    if is_ref(f"refs/remotes/{base}"):
+        return None
+    candidate = f"origin/{base}"
+    return candidate if is_ref(f"refs/remotes/{candidate}") else None
+
+
+def days_ago(timestamp, now):
+    return max(0, int((now - timestamp) / 86400))
+
+
+def plural(count, word, plural_word=None):
+    return f"{count} {word if count == 1 else (plural_word or word + 's')}"
+
+
+def weigh(history, changed, now):
+    """Weigh each past commit by how much of the change it overlaps, halved every HALF_LIFE_DAYS.
+
+    Both terms are a share of the changed files, so a sibling file is worth exactly DIR_WEIGHT of
+    the file it sits beside however wide the change is. Dividing the directory term by the
+    directory count instead would make a sibling worth more the more directories the change spans.
+    """
+    changed_set = set(changed)
+    per_dir = {}
+    for path in changed:
+        directory = posixpath.dirname(path) or "."
+        per_dir[directory] = per_dir.get(directory, 0) + 1
+    weighted = []
+    for commit in history:
+        touched = set(commit["files"])
+        file_overlap = len(touched & changed_set) / len(changed_set)
+        if file_overlap:
+            weight, match = file_overlap, "files"
+        else:
+            touched_dirs = {posixpath.dirname(path) or "." for path in touched}
+            covered = sum(per_dir.get(directory, 0) for directory in touched_dirs)
+            weight, match = DIR_WEIGHT * covered / len(changed_set), "dirs"
+        if weight <= 0:
+            continue
+        commit["weight"] = weight * 0.5 ** (days_ago(commit["time"], now) / HALF_LIFE_DAYS)
+        commit["match"] = match
+        weighted.append(commit)
+    weighted.sort(key=lambda c: -c["weight"])
+    return weighted
+
+
+def pull_for(commit, pulls, nodes):
+    if commit["pr"] is not None:
+        return pulls.get(commit["pr"])
+    associated = ((nodes.get(commit["sha"]) or {}).get("associatedPullRequests") or {}).get("nodes") or []
+    return associated[0] if associated else None
+
+
+def learn_logins(people, commits, pulls, nodes):
+    """A squash or rebase commit is authored by the pull request author; a merge commit is not."""
+    for commit in commits:
+        login = commit_login(nodes.get(commit["sha"]))
+        pull = pull_for(commit, pulls, nodes)
+        if login:
+            people.learn(commit["email"], login)
+        elif pull and len(commit["parents"]) == 1 and pull.get("author") and not is_bot(pull["author"]):
+            people.learn(commit["email"], pull["author"]["login"])
+
+
+def collect_units(commits, pulls, nodes):
+    """One unit of evidence per pull request, or per commit without one. Merging the commits of the
+    same pull request keeps rebase-merged history from crediting its reviewers once per commit."""
+    units = {}
+    for commit in commits:
+        pull = pull_for(commit, pulls, nodes)
+        node = nodes.get(commit["sha"])
+        key = ("pr", pull["number"]) if pull else ("commit", commit["sha"])
+        unit = units.setdefault(key, {"weight": 0.0, "time": 0, "match": "dirs", "pull": pull,
+                                      "author": None, "resolved": False,
+                                      "email": commit["email"], "name": commit["name"]})
+        unit["weight"] += commit["weight"]
+        unit["time"] = max(unit["time"], commit["time"])
+        if commit["match"] == "files":
+            unit["match"] = "files"
+        author = pull.get("author") if pull else None
+        if author is None and commit_login(node):
+            author = {"login": commit_login(node)}
+        if author is not None:
+            unit["resolved"] = True
+            unit["author"] = None if is_bot(author) else author["login"]
+    return units
+
+
+def credit(units, people):
+    """Score from the units that carry review data, and report whether any did.
+
+    A unit whose reviews are unknown must not contribute author credit either. Crediting it would
+    mix a signal drawn from every past change with one drawn from the sample that was fetched, and
+    authorship wins that comparison on coverage alone rather than on evidence.
+    """
+    reviewed = [unit for unit in units.values() if unit["pull"]]
+    for unit in reviewed or units.values():
+        if unit["author"]:
+            people.get(login=unit["author"]).credit(unit, as_reviewer=False)
+        elif not unit["resolved"] and not (BOT_NAME.search(unit["name"]) or BOT_NAME.search(unit["email"])):
+            people.get(email=unit["email"], name=unit["name"]).credit(unit, as_reviewer=False)
+        if unit["pull"]:
+            for login in reviewers_of(unit["pull"]):
+                people.get(login=login).credit(unit, as_reviewer=True)
+    return bool(reviewed)
+
+
+def coverage(units):
+    """Share of the weighted path evidence that carries review data."""
+    total = sum(unit["weight"] for unit in units.values())
+    if not total:
+        return 0.0
+    return sum(unit["weight"] for unit in units.values() if unit["pull"]) / total
+
+
+def lookup_plan(commits, max_prs=MAX_PRS, max_hashes=MAX_HASH_LOOKUPS):
+    """Pull request numbers and commit hashes worth resolving, most relevant first.
+
+    Hash lookups go to one commit per distinct author before any author gets a second, so a repository
+    that keeps pull request numbers out of its subjects still resolves as many people as it can.
+    """
+    numbers, seen_email, spare = [], {}, []
+    for commit in commits:
+        if commit["pr"] is not None:
+            if commit["pr"] not in numbers and len(numbers) < max_prs:
+                numbers.append(commit["pr"])
+        elif commit["email"].lower() not in seen_email:
+            seen_email[commit["email"].lower()] = commit["sha"]
+        else:
+            spare.append(commit["sha"])
+    hashes = list(seen_email.values())[:max_hashes]
+    return numbers, hashes + spare[:max_hashes - len(hashes)]
+
+
+def score(changed, history, pulls, nodes, now):
+    """Rank people for a change from the history of its paths. The backtest drives this offline."""
+    commits = weigh(history, changed, now)
+    people = People()
+    learn_logins(people, commits, pulls, nodes)
+    units = collect_units(commits, pulls, nodes)
+    credit(units, people)
+    return people, commits, units
+
+
+def main():
+    args = parse_args()
+    now = time.time()
+
+    root = run(["git", "rev-parse", "--show-toplevel"]).stdout.strip()
+    if not root:
+        die(f"Not a git repository: {os.getcwd()}")
+    os.chdir(root)
+
+    github = None
+    note = None
+    slug = None if args.no_github else repo_slug()
+    if args.no_github:
+        note = "GitHub review history skipped (--no-github); ranking uses commit authorship only."
+    elif not shutil.which("gh"):
+        note = "GitHub review history unavailable: gh is not installed; ranking uses commit authorship only."
+    elif slug:
+        github = GitHub(*slug)
+    else:
+        note = "GitHub review history unavailable: no remote URL ends in owner/repo; ranking uses commit authorship only."
+
+    branch_name = args.branch
+    if branch_name == "HEAD":
+        branch_name = git("rev-parse", "--abbrev-ref", "HEAD", check=False).strip()
+    branch_pr = None
+    if github and branch_name and branch_name != "HEAD" and is_branch(branch_name):
+        try:
+            branch_pr = github.pull_request_for_branch(branch_name)
+        except ValueError:
+            branch_pr = None
+
+    base = resolve_base(args.base, branch_pr)
+    for rev in (base, args.branch):
+        if not rev_exists(rev):
+            die(f"Unknown revision: {rev}")
+    merge_base = run(["git", "merge-base", base, args.branch]).stdout.strip()
+    if not merge_base:
+        die(f"No merge base between {base} and {args.branch}")
+
+    excludes = []
+    for name in LOCKFILES:
+        excludes += [f":(exclude){name}", f":(exclude,glob)**/{name}"]
+    changed = [p for p in git("diff", "--name-only", merge_base, args.branch, "--", ".", *excludes).split("\n") if p]
+    uncommitted = False
+    if not changed and args.branch == "HEAD":
+        # Nothing is committed yet, which is the usual state when the question is asked before the
+        # branch exists. Rank the work in progress rather than reporting nothing.
+        changed = [p for p in git("diff", "--name-only", merge_base, "--", ".", *excludes).split("\n") if p]
+        changed += [p for p in git("ls-files", "--others", "--exclude-standard", "--", ".",
+                                   *excludes).split("\n") if p]
+        uncommitted = bool(changed)
+    if not changed:
+        print(f"No changes between {base} and {args.branch}")
+        return 0
+    dirs = sorted({posixpath.dirname(path) or "." for path in changed})
+
+    history = git("log", "--first-parent", "-m", f"--since={args.since} days ago", f"--max-count={MAX_COMMITS}",
+                  "--format=%x01%H%x09%P%x09%at%x09%ae%x09%an%x09%s", "--name-only", base, "--",
+                  *[glob_pathspec(d) for d in dirs])
+    commits = weigh(parse_history(history), changed, now)
+
+    branch_authors = [line.split("\t", 1) for line in
+                      git("log", "--format=%ae%x09%an", f"{merge_base}..{args.branch}").splitlines() if line]
+    tip = git("rev-parse", args.branch).strip()
+
+    people = People()
+    pulls, nodes = {}, {}
+    if github:
+        numbers, hashes = lookup_plan(commits)
+        try:
+            pulls, nodes = github.lookup(numbers, hashes + ([tip] if branch_authors else []))
+        except (RuntimeError, ValueError) as error:
+            github = None
+            note = f"GitHub review history unavailable: {error}; ranking uses commit authorship only."
+
+    learn_logins(people, commits, pulls, nodes)
+    if branch_authors:
+        people.learn(branch_authors[-1][0], commit_login(nodes.get(tip)))
+
+    units = collect_units(commits, pulls, nodes)
+    if not credit(units, people) and github:
+        note = ("No pull request review data for these paths; ranking uses commit authorship only, "
+                "which is a weaker signal.")
+
+    excluded = {}
+
+    def exclude(person, reason):
+        excluded.setdefault(person.display, reason)
+
+    for email, name in branch_authors:
+        exclude(people.get(email=email, name=name), "change author")
+    if branch_pr and branch_pr.get("author"):
+        exclude(people.get(login=branch_pr["author"]["login"]), "change author")
+    if commit_login(nodes.get(tip)):
+        exclude(people.get(login=commit_login(nodes.get(tip))), "change author")
+    requester_email = git("config", "user.email", check=False).strip()
+    requester_name = git("config", "user.name", check=False).strip()
+    if requester_email or requester_name:
+        exclude(people.get(email=requester_email or None, name=requester_name or None), "git user")
+    for login in args.exclude:
+        exclude(people.get(login=login), "excluded")
+
+    def is_excluded(person):
+        return person.display in excluded or bool(person.names & set(excluded))
+
+    ranked = sorted((p for p in people.all() if p.score > 0 and not is_excluded(p)),
+                    key=lambda p: (-p.score, -p.last, p.display))[:args.limit]
+
+    fallback = []
+    if github and len(ranked) < args.limit:
+        try:
+            counts = defaultdict(int)
+            for pull in github.recent_pull_requests(FALLBACK_PRS):
+                for login in reviewers_of(pull):
+                    counts[login] += 1
+            shown = {p.display for p in ranked}
+            for login in sorted(counts, key=lambda l: (-counts[l], l)):
+                if login not in shown and not is_excluded(people.get(login=login)):
+                    fallback.append((login, counts[login]))
+                if len(ranked) + len(fallback) >= args.limit:
+                    break
+        except (RuntimeError, ValueError) as error:
+            note = f"Repository-wide reviewer fallback unavailable: {error}"
+
+    reviewed_units = sum(1 for u in units.values() if u["pull"])
+    print()
+    print(f"Suggested reviewers for: {args.branch} vs {base}"
+          + (" (uncommitted changes; nothing is committed on this branch yet)" if uncommitted else ""))
+    print(f"Changed: {plural(len(changed), 'file')} in {plural(len(dirs), 'directory', 'directories')} | "
+          f"History: {plural(len(commits), 'commit')} on these paths in {args.since} days")
+    if reviewed_units:
+        print(f"Ranked from: the {reviewed_units} most relevant pull requests with review data, "
+              f"{round(100 * coverage(units))}% of the weighted history on these paths")
+    if excluded:
+        print("Excluded: " + ", ".join(f"{who} ({why})" for who, why in sorted(excluded.items())))
+    distinct_authors = {email.lower() for email, _ in branch_authors}
+    fresher = remote_alternative(base)
+    if len(distinct_authors) > 3 and fresher:
+        print(f"Warning: {len(distinct_authors)} people authored commits between {base} and {args.branch}. "
+              f"If this branch is not a shared effort, {base} is behind; fetch and pass {fresher}.")
+    if branch_pr:
+        reviewed_by = sorted({r["author"]["login"] for r in branch_pr.get("reviews") or [] if r.get("author")})
+        requested = sorted(filter(None, (r.get("login") or r.get("name") for r in branch_pr.get("reviewRequests") or [])))
+        parts = [f"reviewed by {', '.join(reviewed_by)}" if reviewed_by else "no reviews yet"]
+        if requested:
+            parts.append(f"requested: {', '.join(requested)}")
+        print(f"Pull request #{branch_pr['number']}: {'; '.join(parts)}")
+    if note:
+        print(note)
+    print()
+
+    if not ranked and not fallback:
+        print("No reviewer evidence found for these paths.")
+        return 0
+
+    top = ranked[0].score if ranked else 1
+    rows = [(p.display, f"{round(100 * p.score / top):5d}", p.reviewed, p.authored, f"{days_ago(p.last, now)}d", p.match)
+            for p in ranked]
+    rows += [(login, "    -", count, 0, "", "repo") for login, count in fallback]
+    width = max(8, *(len(row[0]) for row in rows))
+    print(f"{'Reviewer':<{width}} | Score | Reviewed | Authored | Last | Match")
+    print(f"{'-' * width}-|-------|----------|----------|------|------")
+    for display, score, reviewed, authored, last, match in rows:
+        print(f"{display:<{width}} | {score} | {reviewed:8d} | {authored:8d} | {last:>4} | {match}")
+    print()
+    print("Score: review evidence plus a quarter of authoring evidence on these paths, relative to the top candidate; "
+          "a change to a sibling file counts a quarter of a change to the files it sits beside, with a 90-day "
+          "half-life. Match \"repo\" rows have no path evidence and show recent repository-wide reviews instead.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except RuntimeError as error:
+        die(str(error))
+    except KeyboardInterrupt:
+        sys.exit(130)

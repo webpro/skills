@@ -111,8 +111,8 @@ npx skills add webpro/skills --skill send-ntfy-notification
 
 [SKILL.md][21]
 
-Rank candidate reviewers by ownership and recency among authors of existing
-lines changed in a diff, using chunk-level Git blame.
+Rank reviewers by who reviewed and authored earlier pull requests touching the
+changed files and their siblings, resolved to GitHub logins.
 
 ```sh
 npx skills add webpro/skills --skill suggest-pr-reviewers

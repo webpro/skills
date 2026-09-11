@@ -1,143 +1,79 @@
 ---
 name: suggest-pr-reviewers
 description: >-
-  Ranks candidate reviewers for a change by who actually wrote the lines it
-  touches, combining code ownership with recency from chunk-level git blame. Use
-  whenever a reviewer has to be chosen: "who should review this", "who knows this
-  code best", "who has the most context on these files", "find me a reviewer",
-  "add reviewers", "who should I request review from", or when opening a pull
-  request and deciding whom to assign.
+  Ranks reviewers for a change by who reviewed and authored earlier pull
+  requests touching the same files and their sibling files, resolved to GitHub
+  logins with the change author and bots excluded. Use whenever a reviewer has
+  to be chosen: "who should review this", "who knows this code best", "find me
+  a reviewer", "add reviewers", "who should I request review from", or when
+  opening a pull request and deciding whom to assign.
 ---
 
 # Suggest PR Reviewers
 
-Find the most relevant reviewers for a pull request based on who has contributed to the changed files, using a weighted score that combines code ownership and recency.
+Rank reviewers from who reviewed earlier pull requests on the same paths. Do not fall back to `git blame` of the changed lines: people mostly edit their own code, so blame largely returns the change author, who cannot review their own work.
 
 ## Usage
 
+```text
+reviewers [-n LIMIT] [--since DAYS] [--exclude LOGIN] [--no-github] [branch] [base]
 ```
-reviewers [-n limit] [branch] [base]
-```
 
-- `-n limit`: Maximum reviewers to show (default: 10)
-- `branch`: Branch to analyze (default: HEAD)
-- `base`: Base branch to diff against (default: `main`)
+- `-n LIMIT`: maximum reviewers to show (default: 5)
+- `--since DAYS`: history window (default: 365)
+- `--exclude LOGIN`: leave someone out; repeatable
+- `--no-github`: commit authorship only, no `gh` calls
+- `branch`: branch to analyze (default: `HEAD`)
+- `base`: branch to diff against (default: the pull request base if the branch has one, else `main`, `master`, or the remote HEAD; the remote-tracking ref such as `origin/main` wins over a local branch, which falls behind in worktrees nobody pulls)
 
-## Quick Start
-
-Resolve [scripts/reviewers.sh][1] to an absolute path once and run it from the
-repository under review. In Claude Code:
-`SCRIPT="${CLAUDE_SKILL_DIR}/scripts/reviewers.sh"`. A skill directory installed
-globally is not reachable by a relative path from the repository you are in.
+Resolve [scripts/reviewers][1] to an absolute path once and run it from inside the repository under review. In Claude Code: `SCRIPT="${CLAUDE_SKILL_DIR}/scripts/reviewers"`. A globally installed skill directory is not reachable by a relative path from the repository you are in.
 
 ```bash
-"$SCRIPT"                               # current branch vs main, top 10
-"$SCRIPT" -n 5 feature-branch main      # pick branches and limit
+"$SCRIPT"                        # current branch, top 5
+"$SCRIPT" -n 3 feature-branch    # pick the branch and limit
+"$SCRIPT" --exclude alice        # alice is away
 ```
 
-The script resolves the repository root itself, so any directory inside the
-target repository works.
+Requires `git` and Python 3. With `gh` authenticated, the ranking includes review history; without it, the script says so and ranks by commit authorship.
 
-## Metrics Explained
+## Workflow
 
-Uses **chunk-level git blame** to identify who wrote the specific lines being modified, not just who committed to the file.
+1. Run the script from the repository under review. It diffs the branch against the merge base, excludes lockfiles, and reads the history of the changed files and their directories on the base branch. With nothing committed yet it ranks the working tree instead, and says so.
+2. Read the header. It names who was excluded and why, how much of the path history carried review data, whether a pull request already exists for the branch and who has reviewed or been requested, and whether GitHub data was available.
+3. Recommend up to three reviewers from the table. Prefer `files` matches over `dirs`; treat `repo` rows as a last resort, since they carry no evidence about these paths. Explain each pick from the columns: how many pull requests on these paths the person reviewed or authored and how recently.
+4. Drop anyone known to be unavailable and rerun with `--exclude` if that empties the list. Do not infer availability from history.
+5. If the header reports no GitHub data, say so: authorship alone is a weaker signal, and names may be git author names rather than GitHub logins.
 
-| Metric      | Description                                         | Formula                                 |
-| ----------- | --------------------------------------------------- | --------------------------------------- |
-| **Score**   | Combined score (60% ownership, 40% recency)         | `ownership × 0.6 + recency × 0.4`       |
-| **Own**     | Log-scaled authorship with expert decay, capped     | `min(100, 100 × log(lines+1)/log(100) × decay)`          |
-| **Recency** | Score 15-100, higher = more recent                  | `max(15, 100 × e^(-days × 0.693 / 30))` |
-| **Lines**   | Lines of code being modified that this author wrote | Raw count from `git blame`              |
-| **Files**   | Number of changed files this author touched         | Unique file count                       |
-| **Days**    | Days since author last touched these lines          | `(now - last_blame_timestamp) / 86400`  |
+## Ranking
 
-### Scoring Features
+| Column   | Meaning |
+| -------- | ------- |
+| Score    | Review evidence plus a quarter of authoring evidence, relative to the top candidate |
+| Reviewed | Pull requests on these paths the person approved or requested changes on |
+| Authored | Pull requests (or commits) on these paths the person wrote |
+| Last     | Days since the person's most recent activity on these paths |
+| Match    | `files`: touched the same files; `dirs`: sibling files only; `repo`: repository-wide recent reviews |
 
-- **Recency floor (15)**: Historical experts don't drop to 0
-- **Ownership cap (100)**: Prevents prolific authors from dominating
-- **Expert decay**: Ownership decays at 4× slower rate than recency (120-day half-life)
+With GitHub data the ranking reads the fifty most path-relevant pull requests. Each contributes the share of the changed files it touched, or a quarter of the share it sits beside, halved every 90 days. Reviews count when the reviewer approved or requested changes, is not the pull request author, and is not a bot. A pull request whose reviews could not be read contributes nothing at all, including for its author, so that both signals rest on the same evidence. The change author (by commit email and, once the branch is pushed, GitHub login), the local git user, and `--exclude` logins are left out.
 
-## Task Instructions
+## How well this works
 
-When this skill is invoked:
+[tests/backtest][2] replays merged pull requests as if they were open, ranking against history older than each one, and scores the result against the people who actually reviewed it. It also scores a control that ignores the changed paths and names the busiest recent reviewers. Two hundred pull requests per repository, one year of history each:
 
-1. **Determine branches**
-   - If branch specified in args, use it; otherwise use current branch
-   - If base specified, use it; otherwise use `main`
+| Repository | Busiest reviewer covers | Ranked hit@1 / hit@3 | Control hit@1 / hit@3 |
+| ---------- | ----------------------- | -------------------- | --------------------- |
+| grafana/grafana | 4% of reviewed pull requests | 29% / 54% | 4% / 16% |
+| apache/airflow | 26% of reviewed pull requests | 46% / 74% | 47% / 58% |
+| vitejs/vite | 63% of reviewed pull requests | 72% / 99% | 72% / 97% |
 
-2. **Run the reviewers script**
+Path evidence decides the answer where review is spread across the codebase, and the more concentrated review is, the more a repository-wide guess catches up with it. That is what the `repo` rows are for. Reproduce any row inside a blobless clone of that repository:
 
-   ```bash
-   "$SCRIPT" [-n limit] [branch] [base]
-   ```
-
-3. **Present results**
-   - Show the full table of reviewers sorted by score
-   - Note: The current git user can be found with `git config user.name`
-
-4. **Provide recommendations**
-   - Recommend 2-3 reviewers based on scores
-   - If scores are close, mention both as equally qualified
-   - If a reviewer has high recency but low ownership, note they have recent context
-   - If a reviewer has high ownership but low recency, note they have deep knowledge
-
-## Example Output
-
-```
-Suggested reviewers for: feature-branch vs main
-Files: 44 | Lines: 705
-
-Author                    | Score |   Own | Recency | Lines | Files | Days
---------------------------|-------|-------|---------|-------|-------|-----
-John                      |    99 |   100 |      97 |   210 |    15 |    1
-Maria                     |    77 |    82 |      70 |    85 |     8 |   12
-Steve                     |    66 |   100 |      15 |   205 |    20 |  180
-Rose                      |    58 |    75 |      32 |    50 |     5 |   45
+```bash
+git clone --filter=blob:none --no-checkout https://github.com/grafana/grafana.git
+tests/backtest -n 200 --since 365
 ```
 
-## Algorithm Details
+`--set NAME=VALUE` overrides a scoring constant, which is how to check that a term still earns its place before changing one.
 
-### Recency Score (Exponential Decay with Floor)
-
-Uses a 30-day half-life with a minimum floor of 15:
-
-- 0 days ago = 100
-- 30 days ago = 50
-- 60 days ago = 25
-- 90+ days ago = 15 (floor)
-
-```
-recency = max(15, 100 × e^(-days × ln(2) / 30))
-```
-
-### Ownership Score (Logarithmic Scale with Decay and Cap)
-
-Based on lines of code authored (from git blame), with:
-
-- Logarithmic scaling (diminishing returns)
-- Expert decay (120-day half-life, 4× slower than recency)
-- Cap at 100
-
-```
-raw = 100 × log(lines + 1) / log(100)
-decay = e^(-days × ln(2) / 120)
-ownership = min(100, raw × decay)
-```
-
-### Score (Weighted Combination)
-
-```
-score = ownership × 0.6 + recency × 0.4
-```
-
-The 60/40 weighting slightly favors code owners over recent-but-minor contributors.
-
-## Notes
-
-- Uses **chunk-level git blame** on the exact lines being modified (not file-level)
-- Pure additions (new files/lines) have no blame data and don't contribute to scores
-- Ownership capped at 100; recency floored at 15 to keep historical experts visible
-- Current user (from `git config user.name`) should typically be excluded from recommendations
-- Works best with repositories that have >3 months of history
-
-[1]: scripts/reviewers.sh
+[1]: scripts/reviewers
+[2]: tests/backtest
