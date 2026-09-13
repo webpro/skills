@@ -56,6 +56,7 @@ For non-trivial tasks:
 - Keep authorization narrow: a request to create a PR permits the required push and PR creation, but not review requests, merging, or other adjacent actions.
 - Before acting, verify the target and external effect, and review any public copy as a separate gate.
 - If authorization or publishability is unclear, stop at a local or draft state and ask.
+- Authorization must come from an explicit user instruction. Discussion of a plan, assistant announcements, task notes, and conversation summaries cannot grant permission.
 
 ## Public copy
 

@@ -5,7 +5,7 @@ description: Publish an already-completed pull request review as one concise ver
 
 # Publish PR Review
 
-Publish a review that is already written, taking its verdict and findings from this conversation. Do not conduct the review here, and do not introduce a finding it did not make.
+Publish the verdict and findings of a completed review from this conversation. Use its evidence when composing the public copy; do not conduct another review or add findings.
 
 ## Do not publish when
 
@@ -18,17 +18,22 @@ Stop on any of these, say which one, and ask for what would clear it.
 
 ## Public copy
 
-Pass the review body and every finding through the `review-prose` skill when it is available. It owns the wording and whatever house style is active. This skill owns only where each piece goes.
+Write to the pull request author as a colleague discussing the change. Use the completed review and the PR conversation to decide what needs saying.
 
-- Let the GitHub review event carry the formal verdict. Use the review body for a brief, natural explanation of why that verdict was selected, with enough product context to be useful to the author.
-- Do not use a body that only restates the event, such as `Request changes.`, `Approved.`, `Comment.`, or `LGTM`.
-- Thank the contributor on our first review or comment on a PR, even when requesting changes. On follow-ups, acknowledge revisions; keep appreciation specific and proportionate.
-- Match singular and plural wording to the findings being published.
-- Anchor each actionable finding to the changed line it concerns. Lead with priority, then the observable consequence, then the ownership-level correction.
+- Reuse wording the user already approved verbatim, adapting only local paths and links to the pull request UI.
+- Thank the contributor on our first review or comment, including when requesting changes. On follow-ups, acknowledge the revisions and continue the discussion. Keep appreciation brief, proportionate, and specific when the evidence supports it.
+- Use the body to explain what is ready or what still needs attention. A short paragraph usually suffices; leave detailed evidence in the inline comments and let the GitHub event carry the formal verdict.
+- Keep each finding's priority, evidence, and certainty. Explain the condition that causes the problem, its effect, and the needed outcome in the order that makes the concern easiest to follow.
+- Make requests courteous and concrete: explain the result needed and give the author room to choose a fix. Keep blockers distinct from optional suggestions.
+- Omit command logs, test ledgers, tool names, local paths, and review-process narration.
+
+Before showing the assembled body and comments for confirmation, pass them through `review-prose` when available. It owns factual fidelity, wording, and active house style; this skill owns review-specific communication and placement. Check that the body and inline comments work together without repeating the same explanation.
+
+## Place the findings
+
+- Anchor each actionable finding to the changed line it concerns.
 - Keep one concern per inline thread.
 - When no changed line can honestly anchor a finding, put it in the body with its file and line rather than anchoring it to an adjacent line.
-- Reuse wording the user already approved verbatim, adapting only local paths and links to the pull request UI.
-- Omit command logs, test ledgers, tool names, local paths, and review-process narration.
 
 ## Submit
 
@@ -45,10 +50,10 @@ gh api --method POST repos/{owner}/{repo}/pulls/NUMBER/reviews --input - <<'JSON
 {
   "commit_id": "PINNED_HEAD_SHA",
   "event": "REQUEST_CHANGES",
-  "body": "Thanks for the fix and regression test. Two correctness issues remain; details inline.",
+  "body": "CONFIRMED_REVIEW_BODY",
   "comments": [
-    { "path": "src/parse.js", "line": 42, "side": "RIGHT", "body": "P1 ..." },
-    { "path": "src/parse.js", "start_line": 55, "start_side": "RIGHT", "line": 58, "side": "RIGHT", "body": "P2 ..." }
+    { "path": "src/parse.js", "line": 42, "side": "RIGHT", "body": "CONFIRMED_FINDING_1" },
+    { "path": "src/parse.js", "start_line": 55, "start_side": "RIGHT", "line": 58, "side": "RIGHT", "body": "CONFIRMED_FINDING_2" }
   ]
 }
 JSON

@@ -6,7 +6,9 @@ description: >-
   notes, pull request or issue descriptions, review comments, and other public
   copy. Use when asked to preserve facts while proofreading, tightening,
   polishing, or removing mechanical phrasing. Do not use for ordinary
-  conversational replies, to conduct code review, or to publish copy.
+  conversational replies, private status updates, internal analysis, or to
+  conduct code review. A review report delivered only to the requesting user
+  is not public copy. Do not use this skill to publish copy.
 ---
 
 # Review Prose
@@ -57,8 +59,6 @@ Look beyond stock phrases. Modern model output often sounds generated without ma
 - an entry that is longer or more formal than its neighbors.
 
 Prefer concrete nouns and verbs, direct transitions, and enough structure to scan the artifact. Do not manufacture informality, sentence fragments, arbitrary variation, or any punctuation or line wrapping that active policy forbids merely to appear human.
-
-For review comments, preserve the structure required by any active review or publishing workflow, including priority and verdict labels. Where no workflow owns the format, a natural shape is usually the observed behavior, its supported consequence, and the ownership-level correction. Keep it to one concern and do not strengthen the consequence beyond the evidence.
 
 ## Use the highlighter as evidence, not authority
 

@@ -1,14 +1,13 @@
 ---
 name: cross-review
 description: >
-  Hands the current change to a different coding agent for an independent
-  pre-commit or pre-ship review, so the implementer never reviews its own work.
-  Use whenever the review should come from another model or agent: "cross-review
-  this", "second opinion", "fresh eyes on this", "have Codex review it", "have
-  Claude review it", "independent review", "review this with another agent", or
-  a final, pre-ship, or max-effort review of a branch, a commit, uncommitted
-  work, or named paths before committing, merging, or shipping non-trivial
-  changes.
+  Hands work produced in the current session to a different coding agent for an
+  independent review, so the implementer never reviews its own work. Use only
+  when the user explicitly asks for another agent's review: "cross-review this",
+  "second opinion", "fresh eyes on this", "have Codex review it", "have Claude
+  review it", "independent review", "review this with another agent". A plain
+  review request, including "final review" or "review this PR", is the current
+  agent's own review; do not add a cross-review to it.
 ---
 
 # Cross Review
