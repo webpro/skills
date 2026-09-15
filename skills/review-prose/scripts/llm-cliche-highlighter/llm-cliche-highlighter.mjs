@@ -1,4 +1,4 @@
-// Detector adapted from Simon Willison's Apache-2.0 LLM cliche highlighter: https://github.com/simonw/tools/blob/aabd3c5b1258a20ea2d512269ea72a7f083b07a6/llm-cliche-highlighter.html
+// Detector adapted from Simon Willison's Apache-2.0 LLM cliche highlighter: https://github.com/simonw/tools/blob/a48d9920ff1cf203cd0070c3e8321283df50bf11/llm-cliche-highlighter.html
 
 import { readFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -343,6 +343,13 @@ const patterns = [
     name: '\u201cNot just X, but Y\u201d',
     description: 'Negative parallelisms: \u201cnot just X, but (also) Y\u201d, \u201cnot only \u2026 but \u2026\u201d, and the \u201cit\u2019s not X \u2014 it\u2019s Y\u201d contrast.',
     find: makeRegexFinder(/\bnot\s+(?:just|only|merely|simply)\s+[^.!?\n;]*?\bbut(?:\s+also)?\b|\b(?:it|this|that)(?:['\u2019]s|\s+(?:is|was))\s+not\s+[^.!?\n,;\u2014\u2013]{1,60}[,;\u2014\u2013]\s*(?:it|this|that)(?:['\u2019]s|\s+(?:is|was))\b/gi)
+  },
+  {
+    id: 'not-but',
+    group: WIKI_GROUP,
+    name: '\u201cNot X, but Y\u201d',
+    description: 'Plain negative parallelism: \u201cnot X, but Y\u201d, including the split-sentence \u201cisn\u2019t X. It\u2019s Y\u201d form. The intensified \u201cnot just / only\u201d variants have their own pattern.',
+    find: makeRegexFinder(/\bnot\s+(?!(?:just|only|merely|simply)\b)[^.!?\n;]{1,100}?\bbut\b|\b(?:isn['\u2019]t|is not)\s+[^.!?\n]{1,80}[.!?]\s*(?:it['\u2019]s|it is|this['\u2019]s|this is|that['\u2019]s|that is)\b/gi)
   },
   {
     id: 'note-that',
