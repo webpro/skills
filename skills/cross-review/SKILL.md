@@ -19,28 +19,29 @@ review machinery. General engineering policy comes from `AGENTS.md`.
 ## Choose the reviewer and model
 
 - From Codex use Claude; from Claude use Codex; otherwise use another installed
-  independent agent. Never use the invoking agent.
-- Run one reviewer. Panels and repeated reviews require explicit authorization.
+  independent agent. Never use the invoking agent. Run one reviewer; panels and
+  repeated reviews require explicit authorization.
+- Verify the selected CLI version, required flags, and model policy once per
+  session; reuse that evidence while the CLI, provider, and requested policy are
+  unchanged. Read only missing facts from relevant help and official catalog
+  sections, separately from large repository output. Retain a short result and
+  source URL.
+- Prefer stable capability aliases and documented tier roles over release IDs.
+  For Claude, the [model-alias table][1] supplies the selection facts; do not
+  load the full configuration guide. Use only names from the selected reviewer's
+  catalog.
+- Honor a user-named model exactly, with high effort unless max was explicitly
+  requested. Otherwise select:
 
-Resolve the model when invoking the installed reviewer instead of hardcoding a
-release ID:
+| Reviewer | Normal review                        | Explicit max request        |
+| -------- | ------------------------------------ | --------------------------- |
+| Claude   | `opus`, high                         | `best`, max                 |
+| Codex    | Current balanced model, high         | Current flagship model, max |
+| Other    | Tier immediately below premium, high | Premium tier, max           |
 
-- Honor a user-named model exactly. Do not substitute another model if it is
-  rejected. Use high effort unless the user also explicitly requests max.
-- Otherwise inspect the installed CLI's current `--help` and the reviewer's
-  current official model catalog before constructing the command. Prefer stable
-  capability aliases and documented tier roles; never invent a release ID.
-- For every reviewer, a normal review uses the tier immediately below best or
-  premium at high effort; only an explicit max request uses the best or premium
-  tier at max effort.
-- For Claude this means `opus`/high normally and `best`/max explicitly. For
-  Codex, use the current balanced model/high normally and flagship/max
-  explicitly.
-
-Use only names from that reviewer's catalog; Claude aliases are not Codex
-models. If relying on Codex's configured default, first verify that it meets the
-requested model policy. Treat `turn.failed` as failure regardless of the closing
-prose; retry only under the model-negotiation rule below.
+If relying on Codex's configured default, verify that it meets this policy.
+Treat `turn.failed` as failure regardless of closing prose; retry only under the
+model-negotiation rule below.
 
 Record the requested model and effort, plus Claude's resolved model from its
 `system` or `assistant` messages. Codex does not report its resolved model, so
@@ -51,10 +52,11 @@ For a normal review, do not enable premium service tiers, max effort, automatic
 fallback, or enlarged output budgets. Set `CLAUDE_CODE_MAX_OUTPUT_TOKENS` only
 when the user explicitly requests a larger response budget.
 
-Check for installed alternatives such as Gemini, Copilot, or Pi, but do not
-install tools, guess flags, or run another review without authorization. Apply
-the same target, handoff, observability, and cost rules. A different CLI using
-the invoking agent's model is not an independent review.
+Check installed alternatives such as Gemini, Copilot, or Pi only when the
+preferred reviewer is unavailable. Do not install tools, guess flags, or run
+another review without authorization. The same target, handoff, observability,
+and cost rules apply; a different CLI using the invoking agent's model is not
+independent.
 
 ## Define the target and handoff
 
@@ -178,11 +180,12 @@ may still save a report in Claude's user state.
 
 Use `--model best --effort max` for explicit max requests.
 
-For a bounded run with a prompt file, prefer `scripts/run-claude-review.sh
-<seconds> <model> <effort> <prompt-file>`. It enforces the deadline in the child
-process, preserves the raw JSONL before filtering it, reports every pipeline
-component's status, and requires a terminal success event. Keep the raw stream
-outside the repository and remove it after extracting the review evidence.
+Use `scripts/run-claude-review.sh <seconds> <model> <effort> <prompt-file>` for
+bounded Claude runs. It validates the filter, enforces the process-group
+deadline, preserves raw JSONL, checks pipeline statuses, and requires terminal
+success. Run it directly; inspect its implementation only when changing or
+diagnosing it. Keep raw streams outside the repository and remove them after
+extracting review evidence.
 
 From Claude, use Codex's native observable review command:
 
@@ -299,3 +302,5 @@ change clean.
 
 Apply accepted fixes separately, run relevant checks, and repeat the independent
 review only when authorized and the target materially changed.
+
+[1]: https://code.claude.com/docs/en/model-config#model-aliases
