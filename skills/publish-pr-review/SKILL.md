@@ -20,10 +20,11 @@ Stop on any of these, say which one, and ask for what would clear it.
 
 Write to the pull request author as a colleague discussing the change. Use the completed review and the PR conversation to decide what needs saying.
 
-- Reuse wording the user already approved verbatim, adapting only local paths and links to the pull request UI.
+- Reuse wording the user already approved verbatim, adjusting only local paths and links for the pull request UI and labels under the policy below.
 - Thank the contributor on our first review or comment, including when requesting changes. On follow-ups, acknowledge the revisions and continue the discussion. Keep appreciation brief, proportionate, and specific when the evidence supports it.
 - Use the body to explain what is ready or what still needs attention. A short paragraph usually suffices; leave detailed evidence in the inline comments and let the GitHub event carry the formal verdict.
-- Keep each finding's priority, evidence, and certainty. Explain the condition that causes the problem, its effect, and the needed outcome in the order that makes the concern easiest to follow.
+- Preserve each finding's impact, evidence, and certainty. Explain the condition that causes the problem, its effect, and the needed outcome in the order that makes the concern easiest to follow.
+- Omit formal priority or severity labels such as `[P1]` unless explicitly requested or already used in that PR.
 - Make requests courteous and concrete: explain the result needed and give the author room to choose a fix. Keep blockers distinct from optional suggestions.
 - Omit command logs, test ledgers, tool names, local paths, and review-process narration.
 
