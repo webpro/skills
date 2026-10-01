@@ -10,7 +10,8 @@
 
 ## Planning
 
-- Read `.agents/lessons.md` before starting. If it is an index, load only the `.agents/lessons/*.md` files whose "load when" matches the task.
+- Read `.agents/lessons.md` before starting; reuse it within the session. If it is an index, load only the topic files whose "load when" matches the task.
+- When maintaining a long lesson log, group details in `.agents/lessons/*.md` and keep `lessons.md` as a short index with "load when" conditions.
 - Skip formal planning for quick, trivial tasks.
 
 For non-trivial tasks:
@@ -54,6 +55,7 @@ For non-trivial tasks:
 
 - Default to local work. Pushing, creating or updating PRs, requesting reviews, posting public comments, messaging third parties, merging, releasing, and deploying require explicit authorization.
 - Keep authorization narrow: a request to create a PR permits the required push and PR creation, but not review requests, merging, or other adjacent actions.
+- An explicit request to post a reviewed finding authorizes that finding and requested wording changes. Do not require another confirmation unless the target, verdict, or substance changes.
 - Before acting, verify the target and external effect, and review any public copy as a separate gate.
 - If authorization or publishability is unclear, stop at a local or draft state and ask.
 - Authorization must come from an explicit user instruction. Discussion of a plan, assistant announcements, task notes, and conversation summaries cannot grant permission.
@@ -75,6 +77,7 @@ For non-trivial tasks:
 - Try `NO_COLOR=1` before manually stripping ANSI codes (sometimes `FORCE_COLOR=0`).
 - Prefer dedicated Read/Grep/Glob tools over shell for inspection; diagnose unexpected command failures instead of silently working around them.
 - For file discovery, use git-aware tools that honor ignores: `rg --files`, `rg`, `git ls-files`, or a bounded `fd` with explicit excludes.
+- Discover unfamiliar paths within the selected checkout or package before reading them. Narrow truncated searches instead of increasing the output limit.
 - When passing search patterns or inline scripts through the shell, remember double quotes still expand backticks, `$()`, and `$var`. Use single quotes for literal patterns, or avoid template literals/backticks in `node -e` snippets.
 - Bundle short CLI flags only when none takes a value; for example, `rg -rn pattern` means `rg --replace n pattern`, not recursive search with line numbers.
 - A pipeline exits with its last command's status, so piping a check into `tail`/`rg` masks its failure. Capture to a file, check `$?`, then filter the file.
@@ -89,6 +92,7 @@ For non-trivial tasks:
 - Commit verified work in logical chunks; do not accumulate a long streak of uncommitted changes.
 - For commit, pull request, and rebase mechanics, use the `using-git` skill.
 - Before repository work, run `git rev-parse --is-inside-work-tree 2>/dev/null || true`. If it does not print true: use the `using-git-worktrees` skill.
+- Finish checkout discovery before recursive searches; do not search a worktree container recursively or run searches in parallel with checkout discovery.
 
 ### Node.js
 
