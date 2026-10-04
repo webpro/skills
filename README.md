@@ -122,10 +122,10 @@ npx skills add webpro/skills --skill suggest-pr-reviewers
 
 [SKILL.md][22]
 
-Guides bug report and pull request investigation and reproduction. Confirms
-reported behavior is wrong, reproduces issues locally, and checks for
-correct-by-design behavior before writing fixes. Use when given a bug report,
-issue, or error report to investigate.
+Investigate bug reports and review pull requests, including re-reviews and
+batches. Establish the premise first: reproduce the failure, validate fixtures,
+and separate opt-in edge cases from general failures before judging the fix or
+recommending approval.
 
 ```sh
 npx skills add webpro/skills --skill triage-issues
