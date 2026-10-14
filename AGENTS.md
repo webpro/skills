@@ -91,7 +91,7 @@ For non-trivial tasks:
 
 - Commit verified work in logical chunks; do not accumulate a long streak of uncommitted changes.
 - For commit, pull request, and rebase mechanics, use the `using-git` skill.
-- Before repository work, run `git rev-parse --is-inside-work-tree 2>/dev/null || true`. If it does not print true: use the `using-git-worktrees` skill.
+- Before repository work, run `git rev-parse --is-inside-work-tree 2>/dev/null || true` once; check for literal `true` before worktree-only commands, otherwise use `using-git-worktrees` and reuse its paths.
 - Finish checkout discovery before recursive searches; do not search a worktree container recursively or run searches in parallel with checkout discovery.
 
 ### Node.js
