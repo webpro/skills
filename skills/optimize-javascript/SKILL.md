@@ -22,10 +22,13 @@ Keep V8 on the fast path:
 
 ## Optimization workflow
 
-- Profile before changing code — identify whether the bottleneck is CPU, I/O, allocation/GC, startup/module graph, or algorithmic complexity
-- Benchmark the smallest representative workload — warm up, consume results so dead-code elimination cannot remove the work, and compare baseline/change in the same run to avoid drift
-- Use the right Node/V8 diagnostic for the question — `node --prof`/`--prof-process` for CPU, `--trace-deopt` for deoptimizations, `--trace-turbo-inlining` for inlining, `--log-ic` for inline-cache state, heap snapshots or GC traces for memory
-- Treat every rule below as a hypothesis — keep the change only when profiler output, benchmark output, or simpler asymptotic behavior pays for the added complexity in the target workload
+- Profile a representative workload before changing code; use a plain workload if generated benchmark functions obscure attribution. Measure gains without profiling
+- Check equivalent outputs and observable behavior outside timing; for lazy APIs, benchmark construction, shallow access, full materialization and serialization separately as relevant
+- Benchmark representative inputs: warm up steady-state runs, measure cold startup separately, and consume results to prevent dead-code elimination
+- Compare library builds in fresh, sequential processes with identical inputs and flags; alternate AB/BA order across rounds and compare paired timing ratios
+- Keep load, power and thermal conditions stable; use repeated identical-build A/A controls with the same harness to estimate noise. Treat A/B differences within uncertainty as unresolved; ask the user to pause competing work only if needed
+- Check scan complexity by counting primitive operations on adversarial inputs at increasing sizes; elapsed-time thresholds can miss repeated rescanning
+- Keep changes only when measured results or better asymptotic behavior justify their complexity. Record commits, runtime, machine and workload, and rerun affected benchmarks at the final revision
 
 ## Object shapes & inline caches
 
@@ -35,6 +38,7 @@ Keep V8 on the fast path:
 - Watch for megamorphism in shared utility functions — a helper called with many different object shapes across the codebase goes megamorphic; split into shape-specific fast paths or use a type-tag `switch` to recover monomorphic performance
 - Keep function parameter types stable — mixed types prevent TurboFan specialization
 - Prefer integer/numeric enums over string enums — integer comparison is O(1) by value, strings are O(n) character-by-character; small integers are stored as Smi (no heap allocation)
+- Consider prototype accessors to share behavior across instances; measure construction and access costs, preserve own-property and serialization semantics, and keep mutable instance data per object
 
 ## Strings & regex
 
@@ -47,7 +51,8 @@ Keep V8 on the fast path:
 - Accumulate ranges, then `.substring()` once — avoid character-by-character string concatenation
 - Pre-compute character code constants — avoid runtime `charCodeAt()` on string literals in hot paths
 - Hoist invariant string building out of hot-loop comparisons — `arr.find(d => path.startsWith(`${d}/`))` rebuilds `${d}/` every iteration; precompute the concatenated forms once and compare against the pre-built strings (applies to any `+`/template in a loop that doesn't vary with the iteration)
-- Prefer manual character scanning (`indexOf`, `charCodeAt`, loops) over regex for simple patterns — regex has engine overhead (backtracking, state machines) that manual parsing avoids
+- Compare manual scanning with built-in searches and regex for simple patterns; avoid rescanning when classification can share an existing loop
+- For "contains any of these characters", compare `/[*?\[]/.test(s)` with chained `indexOf` calls and a character loop across lengths, misses and match positions; regex search is not constant-time, and no length cutoff is portable
 - Cache compiled regexes outside loops — dynamic `new RegExp()` in a loop recompiles every iteration
 - Reuse a single `Intl.Collator` instance over repeated `localeCompare()` calls
 
@@ -56,7 +61,7 @@ Keep V8 on the fast path:
 - Prefer `Map` over plain objects for dynamic key-value collections — large Maps are faster for insertion, key lookup and iteration; use objects only for static/known-shape data
 - Keep arrays homogeneous — all integers = `PACKED_SMI` (fastest), adding a float transitions to `PACKED_DOUBLE`, adding a string transitions to `PACKED_ELEMENTS` (slowest); transitions are one-way
 - Prefer array literals over `new Array(n)` — pre-sized arrays start holey and can stay on slower paths; when you need a pre-sized dense array, initialize it immediately with `.fill(value)`
-- Don't read out-of-bounds — forces V8 prototype chain walk
+- Avoid out-of-bounds array reads: missing elements can require prototype checks and introduce `undefined` into later operations; guard an empty stack before `stack[stack.length - 1]`, since `-1` is an ordinary property key
 - Use `Set.has()` over `Array.includes()` for repeated lookups — O(1) vs O(n)
 - Don't double-look up a Map — `if (map.has(k)) map.get(k).add(v)` hashes the key twice (`has` and `get` each run the lookup); take the value once with `const inner = map.get(k); if (inner) inner.add(v)` (or `map.get(k)?.add(v)`). Caveat: the single-lookup form treats a missing key as falsy, so only use it when `undefined`/falsy isn't a valid stored value
 - Cache repeated lookups over static data — a linear scan (`.find()`, `.filter()`) called per item in an outer loop becomes O(n × m); memoize when the underlying data doesn't change between calls
@@ -72,6 +77,7 @@ Keep V8 on the fast path:
 - Prefer `for`/`while` over `.forEach()` in measured tight loops — callback overhead and inlining limits can matter, but don't flag non-escaping callbacks without profiler or benchmark evidence
 - Avoid the `arguments` object — use rest params (`...args`); even referencing `arguments` inhibits optimization
 - Match function arity at call sites — mismatched arity creates arguments adaptor frames
+- Arguments are evaluated eagerly: `peek(computeCtx())` calls `computeCtx()` even on a cached path; move it into the branch that needs it when skipping its effects preserves behavior
 - Generators have inherent overhead — provide array-returning alternative for callers that need all results; use generators only when lazy evaluation is needed
 - A generator's cost is the per-element `yield` suspend/resume itself — V8 inlines surrounding identity wrappers, nested closures, and dead constant-guarded branches (`if (DEBUG) …`) to \~0, so stripping that wrapping for speed does nothing. To remove the cost, return an array instead of yielding (trades a one-time allocation for no per-element suspension). Eliminate the generator, not the wrapping
 - Don't use try/catch for expected control flow — use APIs that return null/undefined (e.g. `fs.statSync(file, { throwIfNoEntry: false })`) because Error objects capture stack traces, which is expensive
@@ -87,7 +93,7 @@ Keep V8 on the fast path:
 - Reuse objects with `reset()`/`copyFrom()` instead of allocating new ones — swap references instead of creating
 - Measure before reusing allocations — object pooling/reuse adds complexity; V8 handles short-lived same-shape objects efficiently via young-generation GC, so per-call `new Set()` may be cheaper than maintaining reusable state
 - Memoize allocators whose output is deterministic from their input — a function returning a fresh `Set`/array/object built from its args (e.g. `getDependencies(name) { return new Set([...a, ...b]) }`) reallocates an identical result on every call; cache by input when the same inputs recur. Caveats: the cached value is now shared, so callers must treat it as immutable, and it only pays off when inputs actually repeat
-- Defer expensive work with lazy getters — use `null` sentinel to distinguish "not computed" from "no value", parse on first access only
+- Allocate optional caches on first use: initialize `this.cache = null` consistently, then use `this.cache ??= new Map()`; for lazy results that may be nullish, use a separate initialized flag or a sentinel outside the result domain
 - Never use an unbounded `Map`/object as a cache — it's a memory leak; use `lru-cache` with `max` + `ttl` to bound growth, or `WeakMap` when keys are objects with independent lifetimes
 
 ## Loops & state machines
@@ -96,8 +102,13 @@ Keep V8 on the fast path:
 - Use index-based `while` loops for tight scanning — faster than iterators
 - Pre-compute lookup tables (Map/object) for classification — trade O(1) build time for O(1) lookups in hot paths
 - Pack multiple boolean flags into a `Uint8Array` lookup table — use bitwise `& 1`, `& 2` to test individual flags from a single byte
+- Benchmark lookup tables against short `===` chains; neither wins universally, and input distribution matters
+- Before adding bits to a shared lookup table, audit truthiness consumers (`if (table[c])`); a new nonzero entry can change their meaning, so use explicit masks for individual categories
 - Cache `indexOf` results and search forward from last position — avoid rescanning from the start
 - Split fast path / slow path — check for the common simple case first and return early, only fall through to complex parsing when needed
+- Fold classification into the consuming scan when it avoids duplicate lookahead without complicating parser state or backtracking
+- Put cheap, selective predicates before forward scans when evaluation order is interchangeable; repeatedly scanning overlapping suffixes can turn a linear loop quadratic
+- Measure loop-invariant branch removal before claiming a gain; the JIT may already hoist or eliminate it, and predictable branches can be cheap
 - Use character lookahead before committing to state changes — peek at next char(s) to decide the operation without advancing position
 
 ## Async
@@ -136,6 +147,8 @@ Reference:
 - [Node.js flame graphs][14] — official guide for CPU flame graph analysis
 - [Node.js heap snapshots][15] — official memory diagnostics workflow
 - [ECMA-262][16] — the language spec, e.g. `String.prototype.split` edge cases
+- [CPU profile schema][18]: sampled nodes and optional per-line `positionTicks`
+- [Node.js CPU profiling flags][19]: `--cpu-prof` output and sampling configuration
 
 Measure before trusting any rule here — V8 behavior shifts between versions; use a harness that defeats dead-code elimination such as [mitata][17].
 
@@ -156,3 +169,5 @@ Measure before trusting any rule here — V8 behavior shifts between versions; u
 [15]: https://nodejs.org/en/learn/diagnostics/memory/using-heap-snapshot
 [16]: https://tc39.es/ecma262/
 [17]: https://github.com/evanwashere/mitata
+[18]: https://github.com/ChromeDevTools/devtools-protocol/blob/master/json/js_protocol.json
+[19]: https://nodejs.org/api/cli.html#--cpu-prof
