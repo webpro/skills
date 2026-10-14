@@ -26,7 +26,9 @@ Keep V8 on the fast path:
 - Check equivalent outputs and observable behavior outside timing; for lazy APIs, benchmark construction, shallow access, full materialization and serialization separately as relevant
 - Benchmark representative inputs: warm up steady-state runs, measure cold startup separately, and consume results to prevent dead-code elimination
 - Compare library builds in fresh, sequential processes with identical inputs and flags; alternate AB/BA order across rounds and compare paired timing ratios
+- For cases sharing a process, check for interference from persistent runtime state or background work: compare isolated runs with mixed runs in different orders, and isolate affected cases in fresh processes
 - Keep load, power and thermal conditions stable; use repeated identical-build A/A controls with the same harness to estimate noise. Treat A/B differences within uncertainty as unresolved; ask the user to pause competing work only if needed
+- Inspect per-run sample distributions and round timings before aggregating results; multiple timing modes or slow rounds shared by builds warrant investigation
 - Check scan complexity by counting primitive operations on adversarial inputs at increasing sizes; elapsed-time thresholds can miss repeated rescanning
 - Keep changes only when measured results or better asymptotic behavior justify their complexity. Record commits, runtime, machine and workload, and rerun affected benchmarks at the final revision
 
@@ -37,7 +39,7 @@ Keep V8 on the fast path:
 - Avoid `delete obj.prop` — mutates hidden class, forces dictionary mode; set to `undefined` instead
 - Watch for megamorphism in shared utility functions — a helper called with many different object shapes across the codebase goes megamorphic; split into shape-specific fast paths or use a type-tag `switch` to recover monomorphic performance
 - Keep function parameter types stable — mixed types prevent TurboFan specialization
-- Prefer integer/numeric enums over string enums — integer comparison is O(1) by value, strings are O(n) character-by-character; small integers are stored as Smi (no heap allocation)
+- Measure string vs numeric tags before changing representation; V8 can compare internalized strings by identity. Benchmark `switch`, object and `Map` dispatch with representative tag frequencies and handler bodies
 - Consider prototype accessors to share behavior across instances; measure construction and access costs, preserve own-property and serialization semantics, and keep mutable instance data per object
 
 ## Strings & regex
