@@ -38,3 +38,4 @@ For StackBlitz: `pnpx stackblitz-zip https://stackblitz.com/edit/{name} {filenam
 - Approval requires a verified premise, product fit, justified design, correct behavior, and relevant checks. State unresolved design concerns in the verdict, ahead of secondary test improvements.
 - On re-review, refresh revisions and record each prior material concern, including the user's, as open, resolved with evidence, or deferred by the user. Explain downgrades and reuse valid checks.
 - Verify reviewer claims and proposed fixes; agreement is not evidence. Save bulk logs as files and return conclusions with verification limits.
+- Store reports and evidence under the workspace `.agents/reviews/` with the issue or PR id and date in the path, as in `pr-2151.md` or `batch-2086-2090/2086/`, so the next round finds the prior review by id.
