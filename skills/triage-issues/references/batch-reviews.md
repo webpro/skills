@@ -7,11 +7,13 @@ Review tightly coupled changes together; assign independent items separately.
 - Pin item states and revisions; record the baseline and environment once.
 - When authorized and available, assign fresh workers with revisions, instructions, and acceptance criteria. Start with the main skill's premise gate; each worker owns its checkout and evidence. Avoid inheriting accumulated conversation.
 - Bound concurrency and verify initial reviews end to end before expanding the queue.
+- A queue-triage pass is not a review. Keep its observations as leads for a full-depth review.
 
 ## Bound what workers return
 
 - Keep one report per item, evidence alongside it, and a compact batch index.
 - Workers return a brief report: revision, premise and scope, verdict, findings with evidence paths, verification, and gaps. Include fixture validity and provenance; keep bulk output outside the coordinating context.
+- Verify the combined tree of changes that land together, and fix-ups on a stale branch against the current default branch. A clean textual merge can still fail to compile, or leave the semantic half of a conflict in a file that merged cleanly.
 - The coordinator reconciles worker findings with material concerns from the user discussion, verifies premise evidence, and checks interactions before accepting a verdict. Preserve unresolved concerns in the summary; send evidence gaps back to the owning worker.
 
 ## Preserve the discussion context
