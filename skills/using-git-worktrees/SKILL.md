@@ -27,4 +27,11 @@ Run `scripts/discover-worktree-layout.sh` once from the initial cwd to discover 
 - For new single-repository containers, keep the bare Git directory at `.bare` and checked-out worktrees as sibling directories.
 - When `container` is reported, create additional checkouts as its children. Otherwise inspect existing worktree paths and follow their convention.
 - Follow existing path and branch conventions.
+- Never clone another repository inside a worktree container; check for an existing checkout under the project's own paths first.
 - Use the clean-git-repo skill for bulk cleanup.
+
+## Create a checkout
+
+- Give `git -C <bare> worktree add` an absolute path; a relative one resolves under the bare repository.
+- Create review worktrees from the pinned head SHA; `git fetch --prune` can delete manually fetched remote-tracking refs without a corresponding remote branch.
+- Address the new checkout explicitly (`git -C`, `workdir`, `pnpm --dir`); creating a worktree or clone does not change the shell's directory.
