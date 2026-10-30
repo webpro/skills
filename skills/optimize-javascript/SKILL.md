@@ -22,6 +22,7 @@ Keep V8 on the fast path:
 
 ## Optimization workflow
 
+- Before running any benchmark, check power conditions, free disk space, CPU idle time and the busiest processes. If competing workloads, resource pressure or power constraints could distort timings, stop and report the evidence to the user; do not benchmark, wait, retry or relax the criteria
 - Profile a representative workload before changing code; use a plain workload if generated benchmark functions obscure attribution. Measure gains without profiling
 - Check equivalent outputs and observable behavior outside timing; for lazy APIs, benchmark construction, shallow access, full materialization and serialization separately as relevant
 - Benchmark representative inputs: warm up steady-state runs, measure cold startup separately, and consume results to prevent dead-code elimination
