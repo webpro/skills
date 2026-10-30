@@ -76,6 +76,15 @@ defect in the index remains actionable even if the working tree fixes it. Label
 such findings as index-only. Supporting context does not expand the selected
 target.
 
+Choose the review question with the target. Default to conformance for diffs and
+pull requests, covering correctness, intended behavior, and design necessity.
+Use a design focus when the request challenges the approach or its assumptions.
+Infer the focus from context; ask only when ambiguity would materially change
+the review.
+
+Present design assumptions as hypotheses and supply relevant evidence. Ask for
+alternatives and trade-offs, with measurements where the claims require them.
+
 Choose the review unit before invoking the reviewer. Keep a commit separate when
 its behavior or risk is independently testable, or when attribution matters.
 Group consecutive commits when they change the same subsystem or hot call graph
@@ -124,38 +133,51 @@ Repository instructions: <read these exact AGENTS.md paths, or none exist in
 the target checkout; do not search outside it>.
 Review <target, pinned commit IDs, and included local states>.
 
-Intent and acceptance criteria: <...>
-Known complexity, tradeoffs, vulnerabilities, weak points, and accepted/deferred risks: <...>
+Review question: <conformance, or design>.
+Intent and acceptance criteria, or design assumptions to examine: <...>
+Known complexity, tradeoffs, vulnerabilities, weak points,
+and accepted/deferred risks: <...>
 Tests, evidence, assumptions, and gaps: <...>
 Prior findings and dispositions: <none, or ID/status/rationale/evidence>
 User-requested focus or evidence (verbatim, if any): <...>
-Severity filter: <user-requested threshold, or all actionable severities>.
+Severity filter for defects: <user-requested threshold,
+or all actionable severities>.
 
 Total budget: <duration>. Elapsed checkpoints from launch:
 orientation done by <duration>; stop all tools by <duration>;
 return final response by <duration>; hard process limit <duration>.
-Check elapsed wall time after orientation, after slow calls, and before another investigation.
+Check elapsed wall time after orientation, after slow calls,
+and before another investigation.
 Bound command timeouts by the tool cutoff, then use only collected evidence.
 
-Read the whole diff, then prioritize changed behavior and its callers. Verify
-handoff claims against the code. Reuse supplied check results unless stale or a
-specific uncertainty needs independent testing. Stop probing a root cause once
-reproduction, attribution, and correction are clear.
+Read the target and its full diff where applicable. For code changes, prioritize
+changed behavior and its callers. Verify handoff claims against the source and
+evidence. Reuse supplied check results unless stale or a specific uncertainty
+needs independent testing. Stop probing a defect once reproduction, attribution,
+and correction are clear.
 
 Announce the starting phase and give concise updates at meaningful phase changes
 or completed checks, especially before long analysis or tests. Do not narrate
 routine tool calls or speculate.
 
-Find concrete regressions within the target; surrounding code supplies evidence.
-Give severity, file and line in the reviewed state, failure scenario, supporting
-evidence, and smallest coherent fix. Label index-only findings. Distinguish
-disclosed pre-existing risks from new regressions. Omit style-only observations.
-Do not create or touch files.
+For conformance, assess correctness and design necessity within the target,
+including concrete regressions and unjustified complexity. Use surrounding code
+as evidence.
+
+For design, examine the stated assumptions and explain which hold up and why.
+Compare alternatives and trade-offs using relevant evidence, and identify
+unresolved assumptions. Cite source locations when applicable.
+
+For code defects, give severity, file and line in the reviewed state, failure
+scenario, supporting evidence, and smallest coherent fix. Label index-only
+findings and distinguish disclosed pre-existing risks from new regressions.
+Omit style-only observations. Do not create or touch files.
 
 Return the verdict directly in your final response, without saving a report or
-requesting plan approval. Identify the reviewed target and severity filter,
-include findings and material coverage gaps, and state when no findings meet the
-threshold. Omit an inventory of passing checks and implementation plans. Keep a
+requesting plan approval. Identify the reviewed target and review question, and
+include findings and material coverage gaps. For defects, apply the severity
+filter and state when none meet it. For design, state which decisions remain
+unresolved. Omit an inventory of passing checks and implementation plans. Keep a
 focused review under about 500 words when findings allow; retain the evidence
 needed to assess each finding.
 ```
