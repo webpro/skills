@@ -1,20 +1,21 @@
 ---
 name: publish-pr-review
-description: Publish an already-completed pull request review as one concise verdict with actionable findings attached inline. Use when the user asks to post, submit, or publish review findings; do not use this skill to conduct the review itself.
+description: Publish a completed pull request review with inline findings, or carry out its closure recommendation. Use when asked to post, submit, or publish review findings, or close a pull request after review; do not use this skill to conduct the review itself.
 ---
 
 # Publish PR Review
 
-Publish the verdict and findings of a completed review from this conversation. Use its evidence when composing the public copy; do not conduct another review or add findings.
+Publish the verdict and findings of a completed review from this conversation, or carry out its authorized closure recommendation. Use its evidence when composing the public copy; do not conduct another review or add findings.
 
 ## Do not publish when
 
 Stop on any of these, say which one, and ask for what would clear it.
 
-1. The user has not explicitly authorized this publish. Authorization covers the verdict and its inline comments and nothing else: no code changes, labels, reviewer requests, or merges.
+1. The user has not explicitly authorized the requested action. Publishing a review does not authorize closing the pull request. Neither action authorizes code changes, labels, reviewer requests, or merges.
 2. The head has moved past the revision that was reviewed. Checking the findings against the new commits is reviewing rather than publishing, so hand it back instead of doing it here, even when they look like they survive. Publishing against unreviewed code is worse than publishing late.
-3. Every finding is already on the pull request. Read the existing reviews, threads, and PR comments first, including other people's and ones predating the reviewed revision. Drop the findings those threads already cover, say which you dropped, and stop only when nothing is left to add. This condition covers duplication alone; a moved head is condition 2 and outranks it.
-4. The exact assembled review body, every inline comment, and every inline location have not been shown and confirmed. Show the copy itself as a separate step before any mutation; a summary or file path is not a substitute.
+3. You are publishing a review and every finding is already on the pull request. Read the existing reviews, threads, and PR comments first, including other people's and ones predating the reviewed revision. Drop the findings those threads already cover, say which you dropped, and stop only when nothing is left to add. This condition covers duplication alone; a moved head is condition 2 and outranks it.
+4. The exact review body, inline comments and locations, or closing comment have not been shown and confirmed. Show the copy itself as a separate step before any mutation; a summary or file path is not a substitute.
+5. The review depends on an unresolved decision from the maintainer. Return it to triage; do not resolve the review's direction while publishing.
 
 ## Public copy
 
@@ -39,11 +40,11 @@ Before showing the assembled body and comments for confirmation, pass them throu
 
 ## Submit
 
-1. Send one review carrying the verdict and every inline finding. `APPROVE` when ready, `REQUEST_CHANGES` when a finding blocks, `COMMENT` otherwise.
-2. Verify the published state, head commit, comment bodies, paths, and line locations.
+1. For review publication, send one review carrying the verdict and every inline finding: `APPROVE` when ready, `REQUEST_CHANGES` when a finding blocks, `COMMENT` otherwise. For closure, post one comment explaining the reasons and close the pull request; inline findings invite fixes that will not be merged.
+2. Verify the published review or closed state, head commit, comment bodies, and any inline locations.
 3. Report a direct link, and nothing else.
 
-## GitHub
+## GitHub review API
 
 `gh pr review` sends a body only and cannot attach inline comments. One request per finding fans the review out into unrelated threads. Send the whole review at once:
 
@@ -67,3 +68,4 @@ JSON
 - `position` is deprecated. Do not use it.
 - Every anchor must sit inside a diff hunk, both ends of a range included. An anchor outside a hunk fails the whole request with `422 pull_request_review_thread.line must be part of the diff`, taking the verdict and every other finding with it.
 - Collect the commentable lines from the per-file `patch` in `repos/{owner}/{repo}/pulls/NUMBER/files` before sending.
+- Verify anchors through `repos/{owner}/{repo}/pulls/NUMBER/comments`; the review's own comments endpoint can omit `line` and `side`.
