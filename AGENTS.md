@@ -2,7 +2,7 @@
 
 - Challenge your own work before presenting it by asking, "Would a staff engineer approve this?"
 - If something goes sideways, stop and re-plan immediately; do not keep pushing.
-- Make the smallest coherent behavioral change that fully solves the problem; keep adjacent improvements separate.
+- Choose the smallest solution that achieves the requested outcome, including native features or configuration without new code; keep adjacent improvements separate.
 - Diff behavior between main and your changes when relevant.
 - Assume your knowledge is stale; verify packages, APIs, and syntax against current documentation.
 - If you say "I will do X", actually do X; do not just announce intentions.
@@ -13,6 +13,9 @@
 - Read `.agents/lessons.md` before starting; reuse it within the session. If it is an index, load only the topic files whose "load when" matches the task.
 - When maintaining a long lesson log, group details in `.agents/lessons/*.md` and keep `lessons.md` as a short index with "load when" conditions.
 - Skip formal planning for quick, trivial tasks.
+- Before implementation, identify the requested outcome and constraints; distinguish requirements from assumptions.
+- When alternatives differ materially, compare the simplest viable options and present the recommendation and relevant trade-offs before implementation. Resolve only choices that would change the approach.
+- Prefer native features and formats when they satisfy the whole request. Before writing or delegating custom code, state the concrete unmet requirement that justifies it.
 
 For non-trivial tasks:
 
@@ -27,11 +30,14 @@ For non-trivial tasks:
 ## Implementation and Design Review
 
 - Read broadly before editing: understand surrounding code, callers, relevant history, acceptance criteria, and the product's error bias.
+- Preserve the existing design and maintainability; if a request requires invasive abstractions or changes scattered across layers, challenge the request before implementing.
+- When complexity grows, reconsider the approach before adding more code or tests. Passing tests and effort already spent do not justify continuing an unnecessary implementation.
 - Make small, testable, incremental changes; after each verified step, simplify the result, prefer existing conservative representations, and keep only demonstrably necessary logic.
 - Give each fact or decision one canonical owner; extend it instead of creating parallel code or abstractions.
 - Separate structural fact discovery from product and configuration policy, and prefer structured models over string conventions, regexes, or brittle heuristics.
 - Optimize call graphs before function bodies: eliminate redundant calls, traversals, and allocations before micro-optimizing.
 - Short-circuit multi-result computations only when every required fact is settled.
+- When asked whether code is still needed, try removing it and run the relevant tests. Check callers and intended behavior before deciding; passing tests alone do not prove it unnecessary.
 - Concise one-liners are fine, but prefer clear control flow over cleverness, unnecessary nesting, or abstraction.
 
 ## Verification
@@ -39,6 +45,7 @@ For non-trivial tasks:
 - Test rigorously, not hopefully. Before implementation, define the smallest test or direct check that proves the intended behavior and would reliably catch a regression.
 - Use TDD where practical: for bug fixes and behavior changes, add or update a focused test that fails for the expected reason before editing code.
 - Keep feedback tight while iterating: run the smallest relevant check first, then expand only as risk and the scope of the change require.
+- Before prolonged investigation, use the cheapest direct check to test the user's hypothesis or rule out an approach.
 - Verify observable results with domain-appropriate evidence, such as test output, CLI output, screenshots, or inspected artifacts.
 - Assert expected values as literals; an expectation that shares its source with the actual value cannot catch a wrong one.
 - For batch or monitored work, verify the first 2–3 items end to end and stop after repeated identical errors instead of continuing blindly.
@@ -62,7 +69,7 @@ For non-trivial tasks:
 
 ## Public copy
 
-- Use `review-prose` before delivering documentation, review findings, or other public technical copy you drafted or revised.
+- Use `review-prose` for copy intended for repository files or external readers. Skip it for ordinary chat, progress updates, and private findings shared only with the user.
 - Write public copy for reviewers and future readers: talk product, not agent process; omit scope disclaimers, follow-up claims, and verbose process notes.
 - Keep local workflow artifacts out of commits and public copy.
 - Keep hard-wraps, em-dashes and curly quotes out of public copy, including comments and pull requests. Use Markdown when target supports it; omit excessive bold markup.
@@ -82,6 +89,8 @@ For non-trivial tasks:
 - Bundle short CLI flags only when none takes a value; for example, `rg -rn pattern` means `rg --replace n pattern`, not recursive search with line numbers.
 - A pipeline exits with its last command's status, so piping a check into `tail`/`rg` masks its failure. Capture to a file, check `$?`, then filter the file.
 - Destructive operations, global installs, and user- or machine-level configuration changes require explicit authorization.
+- Avoid putting `rm`, `rm -rf` or `rmSync` in compound commands, heredocs or inline scripts: give each run a fresh `mktemp -d` directory, write files with the Write tool, and remove worktrees with `git worktree remove`.
+- Avoid `sed -i.bak`; use Edit or Write instead.
 - macOS shells may use /bin/bash 3.2 and BSD utilities. Before relying on GNU-specific behavior, check command -v and the version (last resort: g-prefixed tool if available). Try both implementations before switching to another means.
 - Do not let that choice redefine a repository script's runtime contract: preserve and test its supported Bash version, or explicitly document and enforce a newer one.
 - Claude Code's Bash tool hardcodes `/bin/bash`; with explicit authorization, install [use-modern-bash][1] once per user and verify `$BASH_VERSION`. The hook affects agent tool calls, not users or CI.
@@ -90,6 +99,7 @@ For non-trivial tasks:
 ### Git
 
 - Commit verified work in logical chunks; do not accumulate a long streak of uncommitted changes.
+- Re-read `git status` and the diff right before `git add`; never trust an earlier review of the working tree.
 - For commit, pull request, and rebase mechanics, use the `using-git` skill.
 - Before repository work, run `git rev-parse --is-inside-work-tree 2>/dev/null || true` once; check for literal `true` before worktree-only commands, otherwise use `using-git-worktrees` and reuse its paths.
 - Finish checkout discovery before recursive searches; do not search a worktree container recursively or run searches in parallel with checkout discovery.
