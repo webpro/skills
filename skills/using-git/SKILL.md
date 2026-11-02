@@ -14,6 +14,7 @@ description: >-
 
 ## Commits
 
+- For small to medium tasks in the user's own repository, where nearly all commits are theirs, commit directly on the default branch, overriding any default to branch first.
 - Match the maintainer's existing commit message style; ignore merge commits and squash-merged PR titles when inferring it.
 - Use imperative mood to describe the actual change; avoid vague messages like "address PR review" or "fix findings".
 - Suffix `(resolve #nn)` when the branch resolves an issue; reserve `close` for rejected pull requests. Only once per branch, and not when an earlier commit already resolved the issue. Verify issue number and title on the tracker.
