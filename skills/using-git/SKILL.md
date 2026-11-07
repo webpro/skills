@@ -20,7 +20,8 @@ description: >-
 - Suffix `(resolve #nn)` when the branch resolves an issue; reserve `close` for rejected pull requests. Only once per branch, and not when an earlier commit already resolved the issue. Verify issue number and title on the tracker.
 - For multi-line messages, write the message to a temporary file and run `git commit -F <file>`; the heredoc-in-`$()` pattern breaks on escaping.
 - Rewriting local-only commits and your own pull request branch is fine. Update rewritten remote history with `--force-with-lease`; never rewrite protected branches.
-- If SSH-key commit signing fails, use `--no-gpg-sign` to continue and report that the resulting commits are unsigned.
+- If SSH-key commit signing fails, use `--no-gpg-sign` to continue locally and report that the resulting commits are unsigned.
+- Never push the user's unsigned commits to a public repository or to an organization that is not theirs: once signing works, re-sign first (`git rebase --exec 'git commit --amend --no-edit -S' <base>`).
 - Before resetting, amending, rebasing or cherry-picking onto a branch, compare its head with the last commit you produced there. If it moved, the user changed it: build on their commit or ask, never replace it with your copy.
 - Build alternative implementations on separate branches from the same base revision, each with its own commit; do not stack one on another.
 
@@ -30,5 +31,5 @@ description: >-
 - Update your own pull request branches by rebasing onto the latest default branch and pushing with `--force-with-lease`.
   - Exception: when a pushed commit message references an issue or pull request, merge the default branch instead to avoid re-triggering reference events and related noise.
 - Run the same class of (cheap) checks CI will (type-check, lint, test) before any push.
-- On someone else's pull request branch, add commits on top of their head; never rebase or replace their commits. Merge the default branch only to resolve conflicts. Prove the pushed tree equals the tested tree.
-- Squash-merge with the subject the user approved, checked against the current PR title (`gh pr merge --squash --subject '<title> (#N)'`).
+- On someone else's pull request branch, add commits on top of their head; never rebase, replace or locally re-create their commits. Merge the default branch only to resolve conflicts. Prove the pushed tree equals the tested tree.
+- Squash-merge through the forge (GitHub, Forgejo, GitLab) with the subject the user approved, checked against the current PR title (on GitHub: `gh pr merge --squash --subject '<title> (#N)'`); the forge creates the commit, credits the contributor as author and signs it where supported.

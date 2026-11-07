@@ -22,7 +22,7 @@ Stop on any of these, say which one, and ask for what would clear it.
 Write to the pull request author as a colleague discussing the change. Use the completed review and the PR conversation to decide what needs saying.
 
 - Reuse wording the user already approved verbatim, adjusting only local paths and links for the pull request UI and labels under the policy below.
-- Thank the contributor on our first review or comment, including when requesting changes. Only on initial review or comment, address author by first name when known.
+- On our first review or comment, including when requesting changes, thank the contributor by first name (profile or commits), falling back to `@login` only when there is none.
 - On follow-ups, acknowledge the revisions and continue the discussion. Keep appreciation brief, proportionate, and specific when the evidence supports it.
 - Use the body to explain what is ready or what still needs attention. A short paragraph usually suffices; leave detailed evidence in the inline comments and let the GitHub event carry the formal verdict.
 - Preserve each finding's impact, evidence, and certainty. Explain the condition that causes the problem, its effect, and the needed outcome in the order that makes the concern easiest to follow.

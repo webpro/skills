@@ -10,6 +10,12 @@ description: >-
 
 For a queue of issues or PRs, also read [Batch reviews](references/batch-reviews.md).
 
+## Reuse context and evidence
+
+- Pin the base and head, using a stacked PR's actual base; save the metadata, discussion and diff once and work from those files.
+- Check workspace `.agents/reviews/` for prior reviews of the same PR or code; reuse their findings and test results only when the tested code and setup still match.
+- Cite a link only after opening it; store the source and the claim it supports with the evidence.
+
 ## Establish the premise first
 
 Read the report, discussion, and original fixtures. Before judging the implementation or proposing fixes, establish what fails, for whom, and why it violates the intended contract. State this and the evidence limits in the first substantive update and the verdict; if unproven, withhold endorsement.

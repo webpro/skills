@@ -19,6 +19,8 @@ Run `scripts/discover-worktree-layout.sh` once from the initial cwd to discover 
 - `mixed-container`: select the reported `repository` that matches the task.
 - Nonzero exit: the target is not a recognized Git workspace. Stop, unless the task is to set up a new container there.
 
+Finish discovery before recursive file searches, and scope them to the selected checkout rather than the worktree container.
+
 `workspace` is the shared `.agents` root and is always reported. `container` is where checkouts live and is reported for bare repositories. They differ when the container is nested, as in `project/{.agents,worktrees/{.bare,main,…}}`. Values are resolved from any starting depth, including inside a checkout, so use reported values rather than deriving them from cwd.
 
 ## Structure
